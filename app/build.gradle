@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Thư mục OpenCV-android-sdk: đặt opencv.sdk trong local.properties (không đưa lên git).
+def localProps = new Properties()
+def localFile = rootProject.file('local.properties')
+if (localFile.exists()) localFile.withInputStream { localProps.load(it) }
+def opencvSdk = localProps.getProperty('opencv.sdk', System.getenv('OPENCV_ANDROID_SDK') ?: '')
+
+android {
+    namespace 'com.sphere360.app'
+    compileSdk 36
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'com.sphere360.app'
+        minSdk 29
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared', "-DOPENCV_ANDROID_SDK=${opencvSdk}"
+                cppFlags '-std=c++17 -frtti -fexceptions'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // App cá nhân: ký bằng debug key để cài thẳng lên máy.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '4.1.2'
+        }
+    }
+
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Chỉ dùng cho màn hình thử nghiệm ARCore (vị trí 6 bậc tự do và Depth API).
+    implementation 'com.google.ar:core:1.57.0'
+}
