@@ -2,7 +2,8 @@
 #
 # Ký APK: bản release ký bằng khoá debug (app/build.gradle). Máy chủ CI tự tạo khoá debug mới mỗi lần nên APK
 # không cài đè được lên app đã cài từ máy khác. Muốn cùng chữ ký với máy mình thì lưu khoá debug vào secret
-# DEBUG_KEYSTORE_BASE64 (base64 của ~/.android/debug.keystore).
+# DEBUG_KEYSTORE_BASE64 (base64 của ~/.android/debug.keystore); workflow giải mã ra file và trỏ SPHERE360_KEYSTORE
+# tới đó. Bước "Chữ ký APK" in vân tay SHA-256 để đối chiếu.
 name: Build APK
 
 on:
@@ -62,8 +63,8 @@ jobs:
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
-            mkdir -p ~/.android
-            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            echo "SPHERE360_KEYSTORE=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
             echo "Ký bằng khoá debug từ secret DEBUG_KEYSTORE_BASE64."
           else
             echo "::warning::Chưa có secret DEBUG_KEYSTORE_BASE64: APK ký bằng khoá debug của máy CI, không cài đè được lên app đã cài."
@@ -73,6 +74,10 @@ jobs:
         env:
           OPENCV_ANDROID_SDK: ${{ runner.temp }}/OpenCV-android-sdk
         run: ./gradlew assembleRelease --no-daemon
+
+      - name: Chữ ký APK
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs             app/build/outputs/apk/release/app-release.apk | grep -E "DN:|SHA-256"
 
       - name: Đặt tên APK
         id: apk
