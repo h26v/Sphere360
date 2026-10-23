@@ -1,0 +1,16 @@
+# Gradle / Android Studio
+.gradle/
+build/
+.cxx/
+.externalNativeBuild/
+captures/
+.idea/
+*.iml
+.DS_Store
+
+# Cấu hình riêng từng máy (đường dẫn Android SDK, OpenCV)
+local.properties
+
+# Khoá ký bản phát hành
+*.jks
+*.keystore
