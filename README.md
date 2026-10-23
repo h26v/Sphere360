@@ -97,6 +97,13 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 Bản release được ký bằng khoá debug để cài thẳng lên máy. Chỉ build cho `arm64-v8a`; minSdk 29.
 
+### Build tự động (GitHub Actions)
+
+`.github/workflows/build.yml` build APK release sau mỗi lần push (mọi nhánh, tag `v*`) và cho pull request:
+cài NDK/CMake, tải OpenCV Android SDK (có cache), rồi `./gradlew assembleRelease`. APK nằm ở mục **Artifacts**
+của lần chạy, giữ 30 ngày. Máy CI tự tạo khoá debug riêng nên APK không cài đè được lên app đã cài từ máy khác;
+muốn cùng chữ ký thì lưu `~/.android/debug.keystore` (base64) vào secret `DEBUG_KEYSTORE_BASE64`.
+
 ## Lệnh debug qua adb
 
 `debug.DebugActivity` chỉ adb gọi được (đòi quyền `DUMP`). Ghép một lượt mà không đụng tới `pano.jpg`,
