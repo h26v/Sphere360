@@ -33,6 +33,13 @@ public final class Rot {
         return new float[]{c, -s, 0, s, c, 0, 0, 0, 1};
     }
 
+    /** Góc (độ) của phép xoay tương đối a^T b. */
+    public static double rotationDeg(float[] a, float[] b) {
+        double tr = 0;
+        for (int i = 0; i < 9; i++) tr += (double) a[i] * b[i];
+        return Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2))));
+    }
+
     public static double angleDeg(float[] a, float[] b) {
         // atan2(|a×b|, a·b) chính xác cả khi hai vector gần trùng nhau (acos thì không).
         double cx = (double) a[1] * b[2] - (double) a[2] * b[1];

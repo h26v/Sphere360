@@ -33,12 +33,30 @@ public final class Session {
         }
     }
 
+    /** Khung cầu nối: ảnh xám nhỏ chụp lúc lia máy, sau tấm thứ after (xem capture/BridgeRecorder). */
+    public static final class Bridge {
+        public final String file;
+        public final int after;
+        public final float[] rotation; // camera -> toàn cảnh, 9 số theo hàng
+        public final float blurPx;
+
+        public Bridge(String file, int after, float[] rotation, float blurPx) {
+            this.file = file;
+            this.after = after;
+            this.rotation = rotation;
+            this.blurPx = blurPx;
+        }
+    }
+
     public final File dir;
     public double focalPx;
     public int imageWidth;
     public int imageHeight;
     public int targetCount;
     public final List<Frame> frames = new ArrayList<>();
+    public final List<Bridge> bridges = new ArrayList<>();
+    public double bridgeFocalPx;
+    public int bridgeRotation = 90; // xoay theo chiều kim đồng hồ bấy nhiêu độ thì khung cầu nối đứng
     public String savedUri;
     public int savedWidth;
 
@@ -99,6 +117,16 @@ public final class Session {
             for (int k = 0; k < 9; k++) rot[k] = (float) r.getDouble(k);
             s.frames.add(new Frame(f.getString("file"), f.getInt("target"), rot));
         }
+        s.bridgeFocalPx = o.optDouble("bridgeFocalPx", 0);
+        s.bridgeRotation = o.optInt("bridgeRotation", 90);
+        JSONArray br = o.optJSONArray("bridges");
+        for (int i = 0; br != null && i < br.length(); i++) {
+            JSONObject b = br.getJSONObject(i);
+            JSONArray r = b.getJSONArray("R");
+            float[] rot = new float[9];
+            for (int k = 0; k < 9; k++) rot[k] = (float) r.getDouble(k);
+            s.bridges.add(new Bridge(b.getString("file"), b.getInt("after"), rot, (float) b.optDouble("blur", 0)));
+        }
         return s;
     }
 
@@ -124,6 +152,22 @@ public final class Session {
                 arr.put(fo);
             }
             o.put("frames", arr);
+            if (!bridges.isEmpty()) {
+                o.put("bridgeFocalPx", bridgeFocalPx);
+                o.put("bridgeRotation", bridgeRotation);
+                JSONArray ba = new JSONArray();
+                for (Bridge b : bridges) {
+                    JSONObject bo = new JSONObject();
+                    bo.put("file", b.file);
+                    bo.put("after", b.after);
+                    bo.put("blur", (double) b.blurPx);
+                    JSONArray r = new JSONArray();
+                    for (float v : b.rotation) r.put((double) v);
+                    bo.put("R", r);
+                    ba.put(bo);
+                }
+                o.put("bridges", ba);
+            }
             File tmp = new File(dir, "session.json.tmp");
             try (FileOutputStream out = new FileOutputStream(tmp)) {
                 out.write(o.toString(1).getBytes(StandardCharsets.UTF_8));

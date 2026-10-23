@@ -7,13 +7,14 @@
 //     (cảm biến đo chiều "xuống" rất chuẩn), neo lỏng theo hướng ngang (con quay trôi theo thời gian).
 //  4. Thị sai: ở mỗi vùng chồng, tính optical flow giữa hai ảnh rồi uốn mỗi ảnh đi nửa đường để nội
 //     dung gặp nhau; độ uốn giảm dần ra xa vùng chồng (giống Street View, bản đơn giản hoá).
-//  5. Cân bằng sáng, tìm đường nối bằng graph cut trên ảnh nhỏ, giao vùng đỉnh/đáy cho tấm chụp
-//     thẳng lên/xuống, nối vòng ở kinh tuyến 180°.
+//  5. Cân bằng sáng, tìm đường nối bằng graph cut trên ảnh nhỏ (né chỗ thị sai lớn), giao vùng
+//     đỉnh/đáy cho tấm chụp thẳng lên/xuống, nối vòng ở kinh tuyến 180°.
 //  6. Dựng ảnh ở độ phân giải đầy đủ và trộn nhiều dải tần (multi-band).
 
 #include "stitcher.h"
 
 #include "alignment.h"
+#include "bridge.h"
 #include "flow.h"
 #include "geometry.h"
 #include "params.h"
@@ -23,6 +24,45 @@
 namespace sphere {
 
 namespace {
+
+// Ảnh debug ở khung đường nối: trên là ảnh ghép thô kèm đường nối (đỏ), dưới là thị sai lớn nhất của các
+// cặp (đen = khớp, sáng = lệch nhiều).
+void writeSeamDebug(const std::string &path, const std::vector<UMat> &warped, const std::vector<UMat> &masks,
+                    const std::vector<Point> &corners, const std::vector<PairParallax> &parallax, int width) {
+    const int H = width / 2, W = width + width / 8, ox = width / 2;
+    Mat comp(H, W, CV_8UC3, Scalar::all(0)), owner(H, W, CV_32S, Scalar(-1)), par(H, W, CV_32F, Scalar(0));
+    for (size_t k = 0; k < warped.size(); ++k) {
+        Mat img = warped[k].getMat(ACCESS_READ), m = masks[k].getMat(ACCESS_READ);
+        for (int y = 0; y < img.rows; ++y)
+            for (int x = 0; x < img.cols; ++x) {
+                int gx = corners[k].x + x + ox, gy = corners[k].y + y;
+                if (gx < 0 || gy < 0 || gx >= W || gy >= H || !m.at<uchar>(y, x)) continue;
+                comp.at<Vec3b>(gy, gx) = img.at<Vec3b>(y, x);
+                owner.at<int>(gy, gx) = (int) k;
+            }
+    }
+    for (const PairParallax &pp : parallax)
+        for (int y = 0; y < pp.deg.rows; ++y)
+            for (int x = 0; x < pp.deg.cols; ++x) {
+                int gx = pp.roi.x + x + ox, gy = pp.roi.y + y;
+                if (gx < 0 || gy < 0 || gx >= W || gy >= H) continue;
+                float &v = par.at<float>(gy, gx);
+                v = std::max(v, pp.deg.at<float>(y, x));
+            }
+    for (int y = 0; y + 1 < H; ++y)
+        for (int x = 0; x + 1 < W; ++x) {
+            int o = owner.at<int>(y, x);
+            if (o >= 0 && ((owner.at<int>(y, x + 1) >= 0 && owner.at<int>(y, x + 1) != o) ||
+                           (owner.at<int>(y + 1, x) >= 0 && owner.at<int>(y + 1, x) != o)))
+                comp.at<Vec3b>(y, x) = Vec3b(0, 0, 255);
+        }
+    Mat p8, pc;
+    par.convertTo(p8, CV_8U, 255.0 / (kSeamParallaxCapDeg - kSeamParallaxFloorDeg));
+    applyColorMap(p8, pc, COLORMAP_INFERNO);
+    Mat out;
+    vconcat(comp, pc, out);
+    imwrite(path, out, {IMWRITE_JPEG_QUALITY, 90});
+}
 
 Mat loadUpright(const std::string &path) {
     // IMREAD_COLOR áp dụng luôn EXIF orientation.
@@ -38,20 +78,25 @@ Mat loadUpright(const std::string &path) {
 }  // namespace
 
 std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat> &sensorR,
-                   double focalFull, int outWidth, int jpegQuality, bool deghost, const std::string &outPath,
-                   const Progress &progress) {
+                   double focalFull, const BridgeInput &bridges, int outWidth, int jpegQuality, bool deghost,
+                   const std::string &outPath, const Progress &progress) {
     const int n = static_cast<int>(paths.size());
     if (n < 2) return "Cần ít nhất 2 ảnh";
     outWidth = std::max(1024, outWidth / 2 * 2);
     const int outHeight = outWidth / 2;
     const double nativeWidth = 2 * CV_PI * focalFull;
     const double marginRad = kWrapMarginDeg * CV_PI / 180.0;
+    {
+        const size_t dot = outPath.find_last_of('.');
+        gDebugStem = !kDebugSeams ? "" : dot == std::string::npos ? outPath : outPath.substr(0, dot);
+    }
 
     // 1. Đặc trưng ở độ phân giải làm việc, kèm bản nhỏ cho bước flow và bước đường nối.
     progress.report(0, "Đang tìm điểm đặc trưng");
     Ptr<Feature2D> finder = SIFT::create(3000);
     std::vector<ImageFeatures> features(n);
     std::vector<Mat> flowImages(n), seamImages(n);
+    std::vector<Mat> matchGray(n);  // ảnh xám tiêu cự kBridgeMatchFocal để đo góc qua khung cầu nối
     std::vector<Size> fullSizes(n);
     double workScale = 1;
     const double flowScale = std::min(1.0, 1.25 * kFlowWidth / nativeWidth);
@@ -64,6 +109,12 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
         Mat work;
         resize(full, work, Size(), workScale, workScale, INTER_AREA);
         computeImageFeatures(finder, work, features[i]);
+        if (kAlignMode == 1 && !bridges.paths.empty()) {
+            Mat g;
+            cvtColor(work, g, COLOR_BGR2GRAY);
+            const double ms = kBridgeMatchFocal / (focalFull * workScale);
+            resize(g, matchGray[i], Size(), ms, ms, ms < 1 ? INTER_AREA : INTER_LINEAR);
+        }
         features[i].img_idx = i;
         resize(full, flowImages[i], Size(), flowScale, flowScale, INTER_AREA);
         resize(full, seamImages[i], Size(), seamScale, seamScale, INTER_AREA);
@@ -96,9 +147,19 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     const double focalWork = focalFull * workScale;
     Matx33d Kwork(focalWork, 0, fs.width * workScale / 2.0, 0, focalWork, fs.height * workScale / 2.0, 0, 0, 1);
     int pairsUsed = 0;
-    std::vector<RayPair> obs = collectRayPairs(features, pairwise, sensor, Kwork.inv(), focalWork, pairsUsed);
+    std::vector<RelRotation> pairRots;
+    std::vector<RayPair> obs = collectRayPairs(features, pairwise, sensor, Kwork.inv(), focalWork, pairsUsed,
+                                               &pairRots);
     LOGI("Cặp ảnh dùng được: %d, điểm khớp: %zu", pairsUsed, obs.size());
-    std::vector<Matx33d> rot = refineRotations(obs, sensor, focalWork, kHuberFullPx * workScale);
+    std::vector<Matx33d> rot;
+    if (kAlignMode == 1) {
+        const std::vector<RelRotation> chainRots = bridgeRotations(bridges, sensor, matchGray, kBridgeMatchFocal);
+        matchGray.clear();
+        rot = averageRotations(pairRots, chainRots, sensor);
+    } else {
+        rot = refineRotations(obs, sensor, focalWork, kHuberFullPx * workScale);
+    }
+    resetDeviating(rot, sensor);
     pairwise.clear();
     features.clear();
     std::vector<Mat> R32(n);
@@ -122,8 +183,13 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
         if (!flowWarped[i].empty() && flowCorners[i].x < -kFlowWidth / 2 + flowMargin) inst.push_back({i, 1});
     }
     const int m = (int) inst.size();
-    std::vector<Field> fields = deghost ? computeFlowFields(inst, flowWarped, flowMasks, flowCorners, kFlowWidth)
+    std::vector<PairParallax> parallax;
+    BridgeChains chains;
+    if (deghost && kUseBridges) chains = loadBridges(bridges, sensor, rot, kFlowWidth);
+    std::vector<Field> fields = deghost ? computeFlowFields(inst, flowWarped, flowMasks, flowCorners, kFlowWidth,
+                                                            (double) kSeamWidth / kFlowWidth, &parallax, &chains)
                                         : std::vector<Field>(m);
+    chains.clear();
     flowWarped.clear();
     flowMasks.clear();
 
@@ -158,9 +224,14 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     {
         std::vector<UMat> warpedF(m);
         for (int k = 0; k < m; ++k) seamWarped[k].convertTo(warpedF[k], CV_32F);
-        Ptr<SeamFinder> seamFinder = makePtr<GraphCutSeamFinder>(GraphCutSeamFinderBase::COST_COLOR_GRAD);
+        std::vector<PairParallax> debugParallax;
+        if (kDebugSeams) debugParallax = parallax;
+        Ptr<SeamFinder> seamFinder = makePtr<ParallaxSeamFinder>(std::move(parallax));
         seamFinder->find(warpedF, seamCorners, seamMasks);
         assignPoleCaps(rot, inst, validMasks, seamCorners, seamMasks, sSeam);
+        if (kDebugSeams) {
+            writeSeamDebug(gDebugStem + "_seams.jpg", seamWarped, seamMasks, seamCorners, debugParallax, kSeamWidth);
+        }
     }
     seamWarped.clear();
     validMasks.clear();

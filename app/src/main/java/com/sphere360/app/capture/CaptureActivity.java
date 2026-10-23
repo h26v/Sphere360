@@ -44,6 +44,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -82,6 +83,18 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     private CameraCaptureSession captureSession;
     private CaptureRequest.Builder previewBuilder;
     private ImageReader jpegReader;
+    private ImageReader bridgeReader;
+    private HandlerThread bridgeThread;
+    private Handler bridgeHandler;
+    private BridgeRecorder bridges;   // null nếu máy không có luồng YUV phù hợp
+    private boolean bridgeStream = true;
+    private volatile long previewSkewNs;
+    // Hai khung cầu nối (hoặc tấm) cách nhau không quá góc này thì bộ ghép dò qua được (kBridgeStepDeg).
+    private static final double BRIDGE_LINK_DEG = 6.0;
+    // Từng này khung liền nhau bị bỏ vì nhòe thì nhắc lia chậm lại.
+    private static final int BRIDGE_BLUR_WARN = 3;
+    private float[] lastTrailDir;
+    private TextView chipBridge;
     private Surface previewSurface;
     private HandlerThread cameraThread;
     private Handler cameraHandler;
@@ -91,7 +104,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     private Ui u;
     private TextView stepLabel;
     private TextView instruction;
-    private TextView chipAim, chipLevel, chipStill, chipOis;
+    private TextView chipAim, chipLevel, chipStill;
     private TextView details;
     private TextView counter;
     private RowProgressView rowProgress;
@@ -162,6 +175,14 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         handheld = getSharedPreferences(Settings.PREFS, MODE_PRIVATE).getBoolean(Settings.PREF_HANDHELD, false);
         targets = CapturePlan.create(spec.hFovDeg, spec.vFovDeg, handheld);
         session = Session.create(this, spec.focalPx, spec.uprightWidth(), spec.uprightHeight(), targets.size());
+        if (spec.bridgeSize != null) {
+            session.bridgeFocalPx = spec.bridgeFocalPx;
+            session.bridgeRotation = spec.sensorOrientation;
+            bridges = new BridgeRecorder(session.dir, spec.bridgeFocalPx, motion, b -> runOnUiThread(() -> {
+                session.bridges.add(b);
+                addTrail(b.rotation, false);
+            }));
+        }
 
         sensorManager = getSystemService(SensorManager.class);
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
@@ -210,9 +231,10 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         chipAim = u.chip("Ngắm", Color.WHITE);
         chipLevel = u.chip("Thẳng", Color.WHITE);
         chipStill = u.chip("Đứng yên", Color.WHITE);
-        chipOis = u.chip("OIS", Ui.TEXT_2);
-        chipOis.setVisibility(View.GONE);
-        for (TextView t : new TextView[]{chipAim, chipLevel, chipStill, chipOis}) {
+        // Sáng xanh khi vừa giữ được khung cầu nối, cam khi khung bị bỏ vì lia nhanh quá.
+        chipBridge = u.chip("Nối", Ui.TEXT_2);
+        chipBridge.setVisibility(bridges != null ? View.VISIBLE : View.GONE);
+        for (TextView t : new TextView[]{chipAim, chipLevel, chipStill, chipBridge}) {
             LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(-2, -2);
             l.leftMargin = u.px(3);
             l.rightMargin = u.px(3);
@@ -279,6 +301,9 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         cameraThread = new HandlerThread("camera");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
+        bridgeThread = new HandlerThread("bridge");
+        bridgeThread.start();
+        bridgeHandler = new Handler(bridgeThread.getLooper());
         if (rotationSensor != null) {
             sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME);
         }
@@ -303,6 +328,11 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             cameraThread = null;
             cameraHandler = null;
         }
+        if (bridgeThread != null) {
+            bridgeThread.quitSafely();
+            bridgeThread = null;
+            bridgeHandler = null;
+        }
         busy = false;
         clearPending();
         holdStart = 0;
@@ -312,6 +342,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     @Override
     protected void onDestroy() {
         if (shutter != null) shutter.release();
+        if (bridges != null) bridges.shutdown();
         if (session != null && session.frames.isEmpty()) session.deleteAll();
         super.onDestroy();
     }
@@ -359,8 +390,16 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             jpegReader = ImageReader.newInstance(spec.jpegSize.getWidth(), spec.jpegSize.getHeight(), ImageFormat.JPEG, 2);
             jpegReader.setOnImageAvailableListener(this::onJpegAvailable, cameraHandler);
 
+            List<Surface> outputs = new ArrayList<>(Arrays.asList(previewSurface, jpegReader.getSurface()));
+            if (bridges != null && bridgeStream && bridgeHandler != null) {
+                bridgeReader = ImageReader.newInstance(spec.bridgeSize.getWidth(), spec.bridgeSize.getHeight(),
+                        ImageFormat.YUV_420_888, 3);
+                bridgeReader.setOnImageAvailableListener(this::onBridgeImage, bridgeHandler);
+                outputs.add(bridgeReader.getSurface());
+            }
+
             //noinspection deprecation
-            camera.createCaptureSession(Arrays.asList(previewSurface, jpegReader.getSurface()),
+            camera.createCaptureSession(outputs,
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(CameraCaptureSession s) {
@@ -368,6 +407,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
                             try {
                                 previewBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                                 previewBuilder.addTarget(previewSurface);
+                                if (bridgeReader != null) previewBuilder.addTarget(bridgeReader.getSurface());
                                 applyLocks(previewBuilder);
                                 s.setRepeatingRequest(previewBuilder.build(), previewCallback, cameraHandler);
                             } catch (CameraAccessException | IllegalStateException e) {
@@ -377,6 +417,15 @@ public class CaptureActivity extends Activity implements SensorEventListener {
 
                         @Override
                         public void onConfigureFailed(CameraCaptureSession s) {
+                            if (bridgeReader != null) {
+                                // Máy không chạy được thêm luồng YUV: chụp như cũ, không có khung cầu nối.
+                                Log.w(TAG, "không chạy được luồng khung cầu nối " + spec.bridgeSize);
+                                bridgeStream = false;
+                                bridgeReader.close();
+                                bridgeReader = null;
+                                createSession();
+                                return;
+                            }
                             runOnUiThread(() -> Toast.makeText(CaptureActivity.this,
                                     "Không cấu hình được camera", Toast.LENGTH_LONG).show());
                         }
@@ -416,6 +465,19 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             jpegReader.close();
             jpegReader = null;
         }
+        if (bridgeReader != null) {
+            bridgeReader.close();
+            bridgeReader = null;
+        }
+    }
+
+    private void onBridgeImage(ImageReader reader) {
+        try (Image img = reader.acquireLatestImage()) {
+            if (img == null || bridges == null) return;
+            bridges.onImage(img, previewExposureNs, previewSkewNs, busy);
+        } catch (IllegalStateException e) {
+            Log.w(TAG, "bridge", e);
+        }
     }
 
     /** Theo dõi tốc trập của khung xem trước để tính ngưỡng rung. */
@@ -424,6 +486,8 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest request, TotalCaptureResult result) {
             Long exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
             if (exp != null && exp > 0) previewExposureNs = exp;
+            Long skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW);
+            if (skew != null && skew > 0) previewSkewNs = skew;
             previewOis = oisActive(result);
         }
     };
@@ -577,7 +641,12 @@ public class CaptureActivity extends Activity implements SensorEventListener {
 
         shutter.play(MediaActionSound.SHUTTER_CLICK);
         targets.get(target).done = true;
-        session.frames.add(new Session.Frame(name, target, Rot.cameraToPano(e.pose)));
+        float[] rotation = Rot.cameraToPano(e.pose);
+        session.frames.add(new Session.Frame(name, target, rotation));
+        if (bridges != null) {
+            bridges.onStill(session.frames.size() - 1, rotation);
+            addTrail(rotation, true);
+        }
         try {
             session.save();
         } catch (IOException ex) {
@@ -695,6 +764,8 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             text = "Đang chụp… giữ yên";
         } else if (SystemClock.uptimeMillis() < rejectNoticeUntil) {
             text = "Tấm vừa rồi bị rung, giữ yên để chụp lại";
+        } else if (!near && panningTooFast()) {
+            text = "Lia chậm lại để giữ khung nối";
         } else if (near && !rollOk) {
             // roll > 0: cạnh phải đang cao hơn cạnh trái.
             text = roll > 0 ? "Hạ cạnh phải xuống cho thẳng" : "Hạ cạnh trái xuống cho thẳng";
@@ -727,11 +798,15 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         paintChip(chipAim, aimOk, near);
         paintChip(chipLevel, rollOk, near);
         paintChip(chipStill, steady, true);
-        chipOis.setVisibility(previewOis ? View.VISIBLE : View.GONE);
+        // OIS gộp vào chip đứng yên cho hàng chip vừa màn hình.
+        chipStill.setText(previewOis ? "Đứng yên · OIS" : "Đứng yên");
+        paintBridgeChip();
 
         String light = limit <= MIN_STEADY_DEG_PER_SEC ? "\nThiếu sáng: nên tựa máy vào vật cố định" : "";
-        details.setText(String.format(Locale.US, "lệch %.1f° · nghiêng %.1f° · rung %.1f/%.1f°/s · 1/%d s%s",
-                lastBestAngle, roll, angularSpeed, limit, Math.round(1e9 / previewExposureNs), light));
+        String bridgeInfo = bridges == null ? "" : bridgeReader == null && !bridgeStream ? " · không có khung nối"
+                : String.format(Locale.US, " · khung nối %d (nhòe bỏ %d)", bridges.kept(), bridges.blurred());
+        details.setText(String.format(Locale.US, "lệch %.1f° · nghiêng %.1f° · rung %.1f/%.1f°/s · 1/%d s%s%s",
+                lastBestAngle, roll, angularSpeed, limit, Math.round(1e9 / previewExposureNs), light, bridgeInfo));
     }
 
     /** Xanh khi đạt, trắng mờ khi chưa; relevant = false thì chưa xét (đang ở xa mục tiêu). */
@@ -739,6 +814,38 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         int color = !relevant ? 0x80FFFFFF : ok ? Ui.GOOD : Color.WHITE;
         chip.setTextColor(color);
         chip.setBackground(u.round(ok && relevant ? 0x334CAF50 : 0x33FFFFFF, 10));
+    }
+
+    /** Mấy khung cầu nối gần nhất đều bị bỏ vì nhòe (lia nhanh quá), và mới xảy ra. */
+    private boolean panningTooFast() {
+        return bridges != null && bridges.blurStreak() >= BRIDGE_BLUR_WARN
+                && SystemClock.uptimeMillis() - bridges.lastBlurMs() < 1000;
+    }
+
+    private void paintBridgeChip() {
+        if (bridges == null) return;
+        if (bridgeReader == null && !bridgeStream) {
+            chipBridge.setVisibility(View.GONE);
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        boolean fresh = now - bridges.lastKeptMs() < 500;
+        boolean blurry = bridges.blurStreak() > 0 && now - bridges.lastBlurMs() < 800;
+        int color = blurry ? Ui.WARN : fresh ? Ui.GOOD : 0x80FFFFFF;
+        int bg = blurry ? 0x33FFB74D : fresh ? 0x334CAF50 : 0x33FFFFFF;
+        chipBridge.setTextColor(color);
+        chipBridge.setBackground(u.round(bg, 10));
+    }
+
+    /** Thêm một điểm vào vệt đường lia; rotation: camera -> toàn cảnh. anchor: tấm chính. */
+    private void addTrail(float[] rotation, boolean anchor) {
+        // Trục nhìn của camera trong hệ toàn cảnh là cột 3; đổi về hệ thế giới (x Đông, y hướng đầu, z lên).
+        float[] dir = {rotation[2], rotation[8], -rotation[5]};
+        boolean linked = lastTrailDir != null && Rot.angleDeg(lastTrailDir, dir) <= BRIDGE_LINK_DEG;
+        lastTrailDir = dir;
+        double yaw = Math.toDegrees(Math.atan2(dir[0], dir[1]));
+        double pitch = Math.toDegrees(Math.asin(Math.max(-1, Math.min(1, dir[2]))));
+        rowProgress.addTrailPoint(yaw, pitch, linked, anchor);
     }
 
     private void confirmExit() {

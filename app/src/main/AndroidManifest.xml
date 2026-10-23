@@ -37,6 +37,14 @@
             android:name=".stitch.StitchActivity"
             android:screenOrientation="portrait" />
 
+        <!-- Lệnh debug qua adb (am start). Quyền DUMP: adb shell có, app thường không xin được. -->
+        <activity
+            android:name=".debug.DebugActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:permission="android.permission.DUMP"
+            android:screenOrientation="portrait" />
+
         <!-- Cho phép mở ảnh 360 từ Thư viện ảnh: Mở bằng -> Sphere360. -->
         <activity
             android:name=".viewer.ViewerActivity"

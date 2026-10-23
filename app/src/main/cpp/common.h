@@ -21,11 +21,17 @@
 #include <string>
 #include <vector>
 
-#define LOG_TAG "SphereStitcher"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) ::sphere::logLine(ANDROID_LOG_INFO, __VA_ARGS__)
+#define LOGW(...) ::sphere::logLine(ANDROID_LOG_WARN, __VA_ARGS__)
 
 namespace sphere {
+// Ghi một dòng log ra logcat (thẻ SphereStitcher), và ra file nếu đã đặt bằng setLogFile.
+void logLine(int priority, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+// Đặt file nhận thêm log (ghi đè); chuỗi rỗng thì thôi ghi file.
+void setLogFile(const std::string &path);
+// Tiền tố đường dẫn cho ảnh debug (vd ".../t1"); rỗng thì không ghi. Đặt trong stitch() khi kDebugSeams.
+inline std::string gDebugStem;
+
 // Toàn bộ mã ghép nằm trong namespace sphere nên dùng thẳng tên của OpenCV cho gọn.
 using namespace cv;
 using namespace cv::detail;
