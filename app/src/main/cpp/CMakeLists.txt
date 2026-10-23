@@ -12,10 +12,13 @@ set(OPENCV_3RD ${OPENCV_SDK}/3rdparty/libs/${ANDROID_ABI})
 
 add_library(sphere_stitcher SHARED
     alignment.cpp
+    bridge.cpp
     epipolar.cpp
     flow.cpp
     geometry.cpp
     jni_bridge.cpp
+    log.cpp
+    params.cpp
     seams.cpp
     stitcher.cpp
     warp.cpp)

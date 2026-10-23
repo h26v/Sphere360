@@ -320,20 +320,14 @@ public class StitchActivity extends Activity {
         long t0 = System.currentTimeMillis();
         try {
             Session s = Session.load(new File(j.dir));
-            int n = s.frames.size();
-            String[] paths = new String[n];
-            float[] rot = new float[9 * n];
-            for (int i = 0; i < n; i++) {
-                Session.Frame f = s.frames.get(i);
-                paths[i] = new File(s.dir, f.file).getAbsolutePath();
-                System.arraycopy(f.rotation, 0, rot, 9 * i, 9);
-            }
+            StitchInput in = StitchInput.from(s);
+            int n = in.frameCount();
             int nativeWidth = s.nativeOutputWidth();
             int width = mode <= 0 ? nativeWidth : Math.min(mode, nativeWidth);
             j.width = width;
             File out = s.panoramaFile();
 
-            String err = NativeStitcher.stitch(paths, rot, s.focalPx, width, 95, deghost, out.getAbsolutePath(),
+            String err = NativeStitcher.stitch(in, width, 95, deghost, out.getAbsolutePath(),
                     (percent, stage) -> {
                         j.percent = percent;
                         j.stage = stage;

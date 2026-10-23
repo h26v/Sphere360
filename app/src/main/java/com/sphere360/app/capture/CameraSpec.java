@@ -25,10 +25,15 @@ final class CameraSpec {
     final boolean manualFocus; // đặt được khoảng lấy nét bằng tay (để khóa nét)
     final boolean realtimeTimestamps; // mốc thời gian ảnh cùng đồng hồ với cảm biến chuyển động
     final boolean ois;                // có chống rung quang học
+    final Size bridgeSize;            // luồng YUV cho khung cầu nối (ngang), null nếu không có
+    final double bridgeFocalPx;       // tiêu cự theo pixel của khung cầu nối
 
-    private CameraSpec(String id, Size jpegSize, Size previewSize, int sensorOrientation, double focalPx,
-                       boolean manualFocus, boolean realtimeTimestamps, boolean ois) {
+    private CameraSpec(String id, Size jpegSize, Size previewSize, Size bridgeSize, int sensorOrientation,
+                       double focalPx, boolean manualFocus, boolean realtimeTimestamps, boolean ois) {
         this.id = id;
+        this.bridgeSize = bridgeSize;
+        // Cùng tỉ lệ 4:3 lấy trọn cảm biến như ảnh JPEG nên tiêu cự tỉ lệ theo chiều rộng.
+        this.bridgeFocalPx = bridgeSize == null ? 0 : focalPx * bridgeSize.getWidth() / jpegSize.getWidth();
         this.ois = ois;
         this.manualFocus = manualFocus;
         this.realtimeTimestamps = realtimeTimestamps;
@@ -62,6 +67,7 @@ final class CameraSpec {
             Size jpeg = largest4x3(map.getOutputSizes(ImageFormat.JPEG), Integer.MAX_VALUE);
             Size preview = largest4x3(map.getOutputSizes(SurfaceTexture.class), 1600 * 1200);
             if (jpeg == null || preview == null) continue;
+            Size bridge = largest4x3(map.getOutputSizes(ImageFormat.YUV_420_888), 1440 * 1080);
 
             float[] focals = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
             SizeF phys = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
@@ -88,8 +94,8 @@ final class CameraSpec {
             int[] oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION);
             boolean ois = oisModes != null && Arrays.stream(oisModes)
                     .anyMatch(m -> m == CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON);
-            return new CameraSpec(id, jpeg, preview, orientation == null ? 90 : orientation, focalPx, manualFocus,
-                    realtime, ois);
+            return new CameraSpec(id, jpeg, preview, realtime ? bridge : null, orientation == null ? 90 : orientation,
+                    focalPx, manualFocus, realtime, ois);
         }
         throw new IllegalStateException("Không tìm thấy camera sau");
     }

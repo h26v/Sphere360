@@ -12,8 +12,10 @@ Photos, Facebook… nhận ra là ảnh 360°.
   con quay, nhòe quá thì bỏ tấm và chụp lại.
 - **Khoá sáng, cân bằng trắng và lấy nét** theo tấm đầu tiên để các tấm cùng tông và cùng tiêu cự.
 - **Hai cách chụp**: kê máy cố định (27 tấm) hoặc cầm tay xoay người (34 tấm, chồng nhiều hơn).
+- **Khung cầu nối**: trong lúc lia máy giữa hai tấm, app giữ thêm ảnh xám nhỏ (luồng YUV ~1440×1080) mỗi 2°
+  kèm hướng máy, để bộ ghép đo được độ lệch lớn của vật gần giữa hai tấm.
 - **Ghép trên máy** bằng bộ ghép C++/OpenCV riêng: căn góc theo điểm đặc trưng có neo trọng lực, uốn ảnh theo
-  optical flow ở vùng chồng để giảm bóng mờ do thị sai, đường nối graph cut, trộn nhiều dải tần.
+  optical flow ở vùng chồng để giảm bóng mờ do thị sai, đường nối graph cut né chỗ thị sai lớn, trộn nhiều dải tần.
 - **Kích thước xuất** 8K, 12K, 16K hoặc tối đa theo camera (1 pixel gốc = 1 pixel ảnh cầu).
 - **Trình xem 360°**: kéo, chụm để phóng to, hoặc xoay theo con quay. Mở được ảnh JPEG từ app khác.
 
@@ -28,8 +30,10 @@ app/src/main/java/com/sphere360/app/
              GuideOverlayView    chấm mục tiêu, vòng ngắm, thanh rung
              RowProgressView     bản đồ các tấm theo hàng
              MotionLog           lịch sử con quay và hướng máy để đo nhòe lúc phơi sáng
+             BridgeRecorder      giữ khung cầu nối từ luồng YUV khi đang lia máy
   stitch/    StitchActivity      chạy bộ ghép, hiện tiến độ, lưu vào Thư viện ảnh
              NativeStitcher      cầu nối JNI tới bộ ghép C++
+             StitchInput         một lượt chụp (tấm + khung cầu nối) ở dạng mảng cho JNI
              GPanoWriter         chèn metadata 360° (XMP GPano) vào JPEG
   viewer/    ViewerActivity      trình xem 360° (OpenGL ES 3)
              PanoRenderer
@@ -38,6 +42,7 @@ app/src/main/java/com/sphere360/app/
   ui/        Ui                  màu và thành phần giao diện dùng chung
   util/      Rot                 phép tính ma trận xoay 3x3
   probe/     ArProbeActivity     thử nghiệm ARCore (vị trí 6 bậc tự do, Depth API)
+  debug/     DebugActivity       lệnh debug qua adb (xem dưới)
 
 app/src/main/cpp/                bộ ghép ảnh cầu (C++17, OpenCV)
   stitcher      toàn bộ quy trình ghép (không phụ thuộc JNI)
@@ -45,9 +50,11 @@ app/src/main/cpp/                bộ ghép ảnh cầu (C++17, OpenCV)
   warp          nắn ảnh lên khung equirect, trường uốn
   flow          optical flow (DIS) ở vùng chồng -> trường uốn giảm bóng mờ
   epipolar      mô hình epipolar khi tâm ống kính dịch đi (chụp cầm tay)
-  seams         giao vùng đỉnh/đáy cho tấm chụp thẳng lên/xuống
+  bridge        dò flow giữa hai tấm liền nhau qua chuỗi khung cầu nối
+  seams         graph cut biết thị sai, giao vùng đỉnh/đáy cho tấm chụp thẳng lên/xuống
   geometry      phép xoay, Kabsch, ma trận nội tại
-  params.h      các tham số của bộ ghép
+  params.h      các tham số của bộ ghép (params.cpp: đổi theo tên lúc chạy, cho lệnh debug)
+  log           log ra logcat và ra file
   jni_bridge    hàm JNI cho NativeStitcher.stitch()
 
 tools/          script Python kiểm tra ảnh cầu trên máy tính (dựng các góc nhìn phối cảnh, đo tiêu cự)
@@ -58,10 +65,11 @@ tools/          script Python kiểm tra ảnh cầu trên máy tính (dựng c�
 1. Tìm điểm SIFT ở ảnh ~1 MP, chỉ so khớp các cặp nằm cạnh nhau theo cảm biến.
 2. Mỗi cặp: RANSAC 2 điểm tìm phép xoay tương đối, bỏ cặp lệch xa cảm biến.
 3. Tinh chỉnh góc mọi tấm cùng lúc (Huber), neo chặt theo trọng lực, neo lỏng theo hướng ngang.
-4. Optical flow ở từng vùng chồng; mỗi ảnh uốn nửa đường để nội dung gặp nhau. Cặp nào khớp mô hình
-   epipolar (máy dịch đi khi chụp) thì flow bị ép dọc đường epipolar.
-5. Cân bằng sáng theo từng ảnh và kênh màu, đường nối graph cut, giao đỉnh/đáy cho tấm chụp thẳng lên/xuống,
-   nối vòng ở kinh tuyến 180°.
+4. Optical flow ở từng vùng chồng; mỗi ảnh uốn nửa đường để nội dung gặp nhau. Hai tấm chụp liền nhau có
+   khung cầu nối thì flow được dò qua chuỗi khung (mỗi bước lệch vài độ) rồi tinh chỉnh thẳng giữa hai tấm.
+   Cặp nào khớp mô hình epipolar (máy dịch đi khi chụp) thì flow bị ép dọc đường epipolar.
+5. Cân bằng sáng theo từng ảnh và kênh màu, đường nối graph cut có thêm chi phí theo thị sai đo được (né vật
+   gần), giao đỉnh/đáy cho tấm chụp thẳng lên/xuống, nối vòng ở kinh tuyến 180°.
 6. Dựng ở độ phân giải đầy đủ, trộn nhiều dải tần (≤ 8K) hoặc trộn mép (lớn hơn).
 
 ## Build
@@ -89,6 +97,20 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 Bản release được ký bằng khoá debug để cài thẳng lên máy. Chỉ build cho `arm64-v8a`; minSdk 29.
 
+## Lệnh debug qua adb
+
+`debug.DebugActivity` chỉ adb gọi được (đòi quyền `DUMP`). Ghép một lượt mà không đụng tới `pano.jpg`,
+`session.json` hay Thư viện ảnh, và đổi được tham số trong `params.h` theo tên:
+
+```bash
+adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd stitch --es session 20261023_171607 --es out t1.jpg --ei width 4096 --es params "'kSeamParallaxWeight=4,kDebugSeams=1'"
+```
+
+Kết quả nằm trong thư mục lượt chụp: `t1.jpg`, `t1.log` (log bộ ghép), và khi `kDebugSeams=1` thêm
+`t1_seams.jpg` (đường nối và bản đồ thị sai) cùng `t1_chain_<p>_<q>.jpg` (điểm dò qua chuỗi khung cầu nối: xanh
+còn, đỏ mất), cuối cùng `t1.done` (JSON: ok, error, ms). Thêm `kUseBridges=0` để ghép không dùng khung cầu nối. `--es cmd params` ghi danh sách
+tham số ra `files/params.txt`. Script `tools/dbg.sh` gói các lệnh này (cài APK, ghép, kéo kết quả về).
+
 ## Mẹo chụp
 
 - Ống kính càng đứng yên một chỗ thì càng ít lệch: tốt nhất là xoay máy quanh một chỗ kê (hộp, gậy, chân máy).
@@ -98,7 +120,8 @@ Bản release được ký bằng khoá debug để cài thẳng lên máy. Ch�
 ## Giới hạn đã biết
 
 - Vật rất gần máy (dưới ~1 m) khi chụp cầm tay vẫn có thể gãy hoặc nhân đôi ở chỗ nối: optical flow không
-  bắt được độ lệch trên ~6–10°.
+  bắt được độ lệch trên ~6–10°. Khung cầu nối chỉ có giữa hai tấm chụp liền nhau (cùng hàng), không có cho
+  đường nối giữa hai hàng.
 - Đáy ảnh thấy chân người chụp hoặc chỗ kê.
 - Trình xem trong app giới hạn ảnh ở 8192 px chiều ngang.
 - Việc ghép chạy trong màn hình ghép, chưa chạy nền.
