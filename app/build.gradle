@@ -30,11 +30,27 @@ android {
         }
     }
 
+    // App cá nhân: bản release ký bằng khoá debug để cài thẳng lên máy. Biến môi trường SPHERE360_KEYSTORE (đường
+    // dẫn tới một debug.keystore, mật khẩu mặc định "android") cho CI ký đúng khoá của máy mình; không có thì dùng
+    // khoá debug mặc định của máy đang build.
+    signingConfigs {
+        release {
+            def keystore = System.getenv('SPHERE360_KEYSTORE')
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            } else {
+                initWith signingConfigs.debug
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            // App cá nhân: ký bằng debug key để cài thẳng lên máy.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
 
