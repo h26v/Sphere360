@@ -55,6 +55,16 @@ const Entry kEntries[] = {
     {"kFlowMaxDeg", Entry::DOUBLE, &kFlowMaxDeg, (double) kFlowMaxDeg},
     {"kFlowSmoothDeg", Entry::DOUBLE, &kFlowSmoothDeg, (double) kFlowSmoothDeg},
     {"kFlowFalloff", Entry::DOUBLE, &kFlowFalloff, (double) kFlowFalloff},
+    {"kFlowJoint", Entry::BOOL, &kFlowJoint, (double) kFlowJoint},
+    {"kJointGridDeg", Entry::DOUBLE, &kJointGridDeg, (double) kJointGridDeg},
+    {"kJointSmooth", Entry::DOUBLE, &kJointSmooth, (double) kJointSmooth},
+    {"kJointPrior", Entry::DOUBLE, &kJointPrior, (double) kJointPrior},
+    {"kJointMaxIter", Entry::INT, &kJointMaxIter, (double) kJointMaxIter},
+    {"kJointPasses", Entry::INT, &kJointPasses, (double) kJointPasses},
+    {"kSeamResidual", Entry::INT, &kSeamResidual, (double) kSeamResidual},
+    {"kSeamResidualScale", Entry::DOUBLE, &kSeamResidualScale, (double) kSeamResidualScale},
+    {"kSeamResidualFloorDeg", Entry::DOUBLE, &kSeamResidualFloorDeg, (double) kSeamResidualFloorDeg},
+    {"kJointRefineMaxDeg", Entry::DOUBLE, &kJointRefineMaxDeg, (double) kJointRefineMaxDeg},
     {"kFlowPoleSkipDeg", Entry::DOUBLE, &kFlowPoleSkipDeg, (double) kFlowPoleSkipDeg},
     {"kFlowConfRef", Entry::DOUBLE, &kFlowConfRef, (double) kFlowConfRef},
     {"kEpiMaxDeg", Entry::DOUBLE, &kEpiMaxDeg, (double) kEpiMaxDeg},
@@ -80,6 +90,8 @@ const Entry kEntries[] = {
     {"kBridgeMinCover", Entry::DOUBLE, &kBridgeMinCover, (double) kBridgeMinCover},
     {"kBridgeFillDeg", Entry::DOUBLE, &kBridgeFillDeg, (double) kBridgeFillDeg},
     {"kDebugSeams", Entry::BOOL, &kDebugSeams, (double) kDebugSeams},
+    {"kDebugResidual", Entry::BOOL, &kDebugResidual, (double) kDebugResidual},
+    {"kDebugDump", Entry::BOOL, &kDebugDump, (double) kDebugDump},
 };
 
 }  // namespace

@@ -33,8 +33,9 @@ struct Field {
 };
 
 // Nắn một ảnh lên mặt cầu (u = s*atan2(x, z), v = s*(pi - acos(y))), có thể kèm trường uốn.
-// Trả về toạ độ góc trên trái của ảnh ra trên khung.
+// Trả về toạ độ góc trên trái của ảnh ra trên khung. srcMask (CV_8U, cùng cỡ src, tuỳ chọn): điểm nào của ảnh
+// có dữ liệu; rỗng = cả ảnh.
 Point warpSphere(const Mat &src, const Mat &K, const Mat &R, double s, Mat &dstImg, Mat &dstMask,
-                 const Field *field = nullptr, double fieldShiftPx = 0);
+                 const Field *field = nullptr, double fieldShiftPx = 0, const Mat &srcMask = Mat());
 
 }  // namespace sphere

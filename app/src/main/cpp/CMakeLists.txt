@@ -19,6 +19,7 @@ add_library(sphere_stitcher SHARED
     jni_bridge.cpp
     log.cpp
     params.cpp
+    quality.cpp
     seams.cpp
     stitcher.cpp
     warp.cpp)

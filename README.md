@@ -52,6 +52,7 @@ app/src/main/cpp/                bộ ghép ảnh cầu (C++17, OpenCV)
   epipolar      mô hình epipolar khi tâm ống kính dịch đi (chụp cầm tay)
   bridge        dò flow giữa hai tấm liền nhau qua chuỗi khung cầu nối
   seams         graph cut biết thị sai, giao vùng đỉnh/đáy cho tấm chụp thẳng lên/xuống
+  quality       đo độ lệch còn lại sau uốn (thước đo khi chỉnh thuật toán, bật bằng kDebugResidual)
   geometry      phép xoay, Kabsch, ma trận nội tại
   params.h      các tham số của bộ ghép (params.cpp: đổi theo tên lúc chạy, cho lệnh debug)
   log           log ra logcat và ra file
@@ -64,13 +65,19 @@ tools/          script Python kiểm tra ảnh cầu trên máy tính (dựng c�
 
 1. Tìm điểm SIFT ở ảnh ~1 MP, chỉ so khớp các cặp nằm cạnh nhau theo cảm biến.
 2. Mỗi cặp: RANSAC 2 điểm tìm phép xoay tương đối, bỏ cặp lệch xa cảm biến.
-3. Tinh chỉnh góc mọi tấm cùng lúc (Huber), neo chặt theo trọng lực, neo lỏng theo hướng ngang.
-4. Optical flow ở từng vùng chồng; mỗi ảnh uốn nửa đường để nội dung gặp nhau. Hai tấm chụp liền nhau có
-   khung cầu nối thì flow được dò qua chuỗi khung (mỗi bước lệch vài độ) rồi tinh chỉnh thẳng giữa hai tấm.
-   Cặp nào khớp mô hình epipolar (máy dịch đi khi chụp) thì flow bị ép dọc đường epipolar.
-5. Cân bằng sáng theo từng ảnh và kênh màu, đường nối graph cut có thêm chi phí theo thị sai đo được (né vật
-   gần), giao đỉnh/đáy cho tấm chụp thẳng lên/xuống, nối vòng ở kinh tuyến 180°.
-6. Dựng ở độ phân giải đầy đủ, trộn nhiều dải tần (≤ 8K) hoặc trộn mép (lớn hơn).
+3. Trung bình phép xoay có chống nhiễu (Cauchy): mỗi cặp ảnh và mỗi chuỗi khung cầu nối cho một phép đo góc
+   tương đối, con quay neo góc giữa hai tấm chụp liền nhau; neo chặt theo trọng lực, lỏng theo hướng ngang.
+4. Optical flow ở từng vùng chồng. Hai tấm chụp liền nhau có khung cầu nối thì flow được dò qua chuỗi khung
+   (mỗi bước lệch vài độ) rồi tinh chỉnh thẳng giữa hai tấm. Cặp nào khớp mô hình epipolar (máy dịch đi khi
+   chụp) thì flow bị ép dọc đường epipolar.
+5. Trường uốn chung: mỗi ảnh có một lưới độ dịch (ô 1°); mọi điểm flow của mọi cặp cùng ràng buộc
+   d_q − d_p = F, cộng độ mượt và lực kéo nhẹ về 0, giải một lần bằng conjugate gradient. Chỗ ba bốn ảnh
+   chồng nhau vẫn khớp được với nhau (cách cũ: mỗi cặp đẩy hai ảnh đi nửa đường rồi lấy trung bình). Lượt
+   thứ hai uốn ảnh theo trường vừa giải, đo flow còn lại và giải phần bù.
+6. Cân bằng sáng theo từng ảnh và kênh màu. Đường nối graph cut có thêm chi phí theo độ lệch còn lại sau khi
+   uốn (đo lại flow trên ảnh đã uốn), nên đi qua chỗ đã khớp, né chỗ còn gãy. Giao đỉnh/đáy cho tấm chụp thẳng
+   lên/xuống, nối vòng ở kinh tuyến 180°.
+7. Dựng ở độ phân giải đầy đủ, trộn nhiều dải tần (≤ 8K) hoặc trộn mép (lớn hơn).
 
 ## Build
 
@@ -115,7 +122,10 @@ adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd stitch --e
 
 Kết quả nằm trong thư mục lượt chụp: `t1.jpg`, `t1.log` (log bộ ghép), và khi `kDebugSeams=1` thêm
 `t1_seams.jpg` (đường nối và bản đồ thị sai) cùng `t1_chain_<p>_<q>.jpg` (điểm dò qua chuỗi khung cầu nối: xanh
-còn, đỏ mất), cuối cùng `t1.done` (JSON: ok, error, ms). Thêm `kUseBridges=0` để ghép không dùng khung cầu nối. `--es cmd params` ghi danh sách
+còn, đỏ mất), cuối cùng `t1.done` (JSON: ok, error, ms). `kDebugResidual=1` ghi thêm vào log độ lệch còn lại
+sau uốn (cả vùng chồng và riêng trên đường nối) và các cặp lệch nhiều nhất; kèm `kDebugSeams=1` thì có thêm
+`t1_res_<p>_<q>.jpg` (hai ảnh đã uốn và bản đồ lệch). `kDebugDump=1` (kèm `kDebugSeams=1`) ghi phép xoay cuối
+cùng `t1_cams.txt` và trường uốn `t1_fields.bin` (~200 MB) để phân tích trên máy tính. Thêm `kUseBridges=0` để ghép không dùng khung cầu nối. `--es cmd params` ghi danh sách
 tham số ra `files/params.txt`. Script `tools/dbg.sh` gói các lệnh này (cài APK, ghép, kéo kết quả về).
 
 ## Mẹo chụp

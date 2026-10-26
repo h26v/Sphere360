@@ -5,9 +5,9 @@
 //  2. Mỗi cặp: RANSAC 2 điểm tìm phép xoay tương đối, bỏ khớp nhầm.
 //  3. Tinh chỉnh góc của mọi tấm cùng lúc (Levenberg–Marquardt, Huber). Neo chặt theo trọng lực
 //     (cảm biến đo chiều "xuống" rất chuẩn), neo lỏng theo hướng ngang (con quay trôi theo thời gian).
-//  4. Thị sai: ở mỗi vùng chồng, tính optical flow giữa hai ảnh rồi uốn mỗi ảnh đi nửa đường để nội
-//     dung gặp nhau; độ uốn giảm dần ra xa vùng chồng (giống Street View, bản đơn giản hoá).
-//  5. Cân bằng sáng, tìm đường nối bằng graph cut trên ảnh nhỏ (né chỗ thị sai lớn), giao vùng
+//  4. Thị sai: ở mỗi vùng chồng, tính optical flow giữa hai ảnh; giải một trường uốn chung cho mọi ảnh để
+//     nội dung các ảnh gặp nhau, độ uốn nhạt dần ra xa vùng chồng; lượt hai đo flow còn lại rồi bù.
+//  5. Cân bằng sáng, tìm đường nối bằng graph cut trên ảnh nhỏ (né chỗ còn lệch sau khi uốn), giao vùng
 //     đỉnh/đáy cho tấm chụp thẳng lên/xuống, nối vòng ở kinh tuyến 180°.
 //  6. Dựng ảnh ở độ phân giải đầy đủ và trộn nhiều dải tần (multi-band).
 
@@ -18,6 +18,7 @@
 #include "flow.h"
 #include "geometry.h"
 #include "params.h"
+#include "quality.h"
 #include "seams.h"
 #include "warp.h"
 
@@ -64,6 +65,17 @@ void writeSeamDebug(const std::string &path, const std::vector<UMat> &warped, co
     imwrite(path, out, {IMWRITE_JPEG_QUALITY, 90});
 }
 
+// Mặt nạ đi kèm ảnh (frame_XX_mask.png cạnh frame_XX.jpg): điểm nào có dữ liệu. Dùng khi ảnh được dựng lại từ
+// một tâm khác (vd theo độ sâu) nên có chỗ trống. Không có file thì trả về rỗng.
+Mat loadMask(const std::string &path, Size size) {
+    const size_t dot = path.find_last_of('.');
+    Mat m = imread((dot == std::string::npos ? path : path.substr(0, dot)) + "_mask.png", IMREAD_GRAYSCALE);
+    if (m.empty()) return m;
+    if (m.cols > m.rows && size.width < size.height) rotate(m, m, ROTATE_90_CLOCKWISE);
+    if (m.size() != size) resize(m, m, size, 0, 0, INTER_NEAREST);
+    return m;
+}
+
 Mat loadUpright(const std::string &path) {
     // IMREAD_COLOR áp dụng luôn EXIF orientation.
     Mat img = imread(path, IMREAD_COLOR);
@@ -98,6 +110,7 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     std::vector<Mat> flowImages(n), seamImages(n);
     std::vector<Mat> matchGray(n);  // ảnh xám tiêu cự kBridgeMatchFocal để đo góc qua khung cầu nối
     std::vector<Size> fullSizes(n);
+    std::vector<Mat> flowSrcMasks(n), seamSrcMasks(n);  // rỗng nếu ảnh không kèm mặt nạ
     double workScale = 1;
     const double flowScale = std::min(1.0, 1.25 * kFlowWidth / nativeWidth);
     const double seamScale = std::min(1.0, 1.25 * kSeamWidth / nativeWidth);
@@ -118,6 +131,8 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
         features[i].img_idx = i;
         resize(full, flowImages[i], Size(), flowScale, flowScale, INTER_AREA);
         resize(full, seamImages[i], Size(), seamScale, seamScale, INTER_AREA);
+        flowSrcMasks[i] = loadMask(paths[i], flowImages[i].size());
+        seamSrcMasks[i] = loadMask(paths[i], seamImages[i].size());
         progress.report(2 + 18 * (i + 1) / n, "Đang tìm điểm đặc trưng");
     }
     finder.release();
@@ -172,7 +187,12 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     std::vector<Point> flowCorners(n);
     for (int i = 0; i < n; ++i) {
         flowCorners[i] = warpSphere(flowImages[i], intrinsics(focalFull * flowScale, flowImages[i].size()),
-                                    R32[i], sFlow, flowWarped[i], flowMasks[i]);
+                                    R32[i], sFlow, flowWarped[i], flowMasks[i], nullptr, 0, flowSrcMasks[i]);
+    }
+    std::vector<Mat> residualImages, residualK;
+    if (kDebugResidual) {
+        residualImages = flowImages;
+        for (const Mat &img : flowImages) residualK.push_back(intrinsics(focalFull * flowScale, img.size()));
     }
     flowImages.clear();
     // Ảnh nằm sát mép trái có thêm một bản dịch đi một vòng để phủ dải lặp bên phải.
@@ -190,6 +210,29 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
                                                             (double) kSeamWidth / kFlowWidth, &parallax, &chains)
                                         : std::vector<Field>(m);
     chains.clear();
+    if (kDebugDump && !gDebugStem.empty()) {
+        // Phép xoay cuối cùng và trường uốn của từng bản, để phân tích ngoài máy (khung flow rộng kFlowWidth).
+        FILE *f = std::fopen((gDebugStem + "_cams.txt").c_str(), "w");
+        if (f) {
+            std::fprintf(f, "%d %.6f %d\n", n, focalFull, kFlowWidth);
+            for (int i = 0; i < n; ++i) {
+                std::fprintf(f, "%d %d", fullSizes[i].width, fullSizes[i].height);
+                for (int k = 0; k < 9; ++k) std::fprintf(f, " %.9f", rot[i].val[k]);
+                std::fprintf(f, "\n");
+            }
+            std::fclose(f);
+        }
+        f = std::fopen((gDebugStem + "_fields.bin").c_str(), "wb");
+        if (f) {
+            for (int k = 0; k < m; ++k) {
+                const Mat &d = fields[k].d;
+                int hdr[6] = {inst[k].img, inst[k].shift, fields[k].corner.x, fields[k].corner.y, d.cols, d.rows};
+                std::fwrite(hdr, sizeof(int), 6, f);
+                for (int y = 0; y < d.rows; ++y) std::fwrite(d.ptr<float>(y), sizeof(float), d.cols * 2, f);
+            }
+            std::fclose(f);
+        }
+    }
     flowWarped.clear();
     flowMasks.clear();
 
@@ -203,7 +246,7 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
         const int i = inst[k].img;
         Mat wi, wm;
         Point c = warpSphere(seamImages[i], intrinsics(focalFull * seamScale, seamImages[i].size()), R32[i], sSeam,
-                             wi, wm, &fields[k], inst[k].shift * (double) kSeamWidth);
+                             wi, wm, &fields[k], inst[k].shift * (double) kSeamWidth, seamSrcMasks[i]);
         if (wi.empty()) {
             wi = Mat::zeros(1, 1, CV_8UC3);
             wm = Mat::zeros(1, 1, CV_8U);
@@ -235,6 +278,11 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     }
     seamWarped.clear();
     validMasks.clear();
+    if (kDebugResidual) {
+        measureResidual(inst, residualImages, residualK, R32, fields, kFlowWidth, seamMasks, seamCorners, kSeamWidth,
+                        &flowSrcMasks);
+        residualImages.clear();
+    }
 
     // 6. Dựng ảnh ở độ phân giải đầy đủ và trộn.
     const float pxPerRad = static_cast<float>(outWidth / (2 * CV_PI));
@@ -255,11 +303,12 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
         Mat full = loadUpright(paths[i]);
         if (full.empty()) return "Không đọc được ảnh: " + paths[i];
         Mat K = intrinsics(focalFull, full.size());
+        const Mat fullMask = loadMask(paths[i], full.size());
         for (int k = 0; k < m; ++k) {
             if (inst[k].img != i) continue;
             Mat warped, warpedMask;
             Point c = warpSphere(full, K, R32[i], pxPerRad, warped, warpedMask, &fields[k],
-                                 inst[k].shift * (double) outWidth);
+                                 inst[k].shift * (double) outWidth, fullMask);
             if (warped.empty()) continue;
             const Point tl = c + Point(inst[k].shift * outWidth, 0);
             Rect roi = Rect(tl, warped.size()) & canvas;

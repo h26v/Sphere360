@@ -57,6 +57,15 @@ inline double kFlowMaxDeg = 6.0;          // độ dịch tối đa chấp nhậ
 inline double kFlowSmoothDeg = 4.0;       // độ mượt của trường uốn
 inline double kFlowFalloff = 0.08;        // càng lớn thì càng ít uốn phần ngoài vùng chồng
 inline double kFlowPoleSkipDeg = 10.0;    // sát cực ảnh equirect méo quá, không tính flow
+// Trường uốn chung (flow.cpp, solveJointFields): giải độ dịch của mọi bản cùng lúc trên lưới ô kJointGridDeg.
+// Tắt thì dùng cách cũ: mỗi cặp đẩy hai bản đi nửa đường, làm mượt kFlowSmoothDeg, nhạt dần theo kFlowFalloff.
+inline bool kFlowJoint = true;
+inline double kJointGridDeg = 1.0;
+inline double kJointSmooth = 4.0;   // độ cứng giữa hai ô kề (so với một ô đủ điểm flow, trọng số 1)
+inline double kJointPrior = 0.02;   // kéo độ dịch về 0: độ uốn nhạt dần ra ngoài vùng chồng
+inline int kJointMaxIter = 800;
+inline int kJointPasses = 2;           // lượt 2 trở đi: đo flow còn lại sau khi uốn rồi giải phần bù
+inline double kJointRefineMaxDeg = 3.0;  // flow còn lại lớn hơn thì bỏ (che khuất, khớp nhầm)
 // Mức "góc cạnh" (giá trị riêng nhỏ của structure tensor, ảnh 8 bit, khối 7x3) coi là tin cậy hoàn toàn.
 inline double kFlowConfRef = 1.5e-3;
 // Xoay người khi chụp thì tâm ống kính dịch đi giữa các tấm. Khi đó một điểm chỉ có thể trượt dọc đường
@@ -83,6 +92,12 @@ inline double kSeamParallaxMinConf = 0.3;
 inline double kSeamBadWindowDeg = 1.5;
 inline double kSeamBadRatioLo = 1.0;
 inline double kSeamBadRatioHi = 1.5;
+// Đường nối né chỗ còn lệch sau khi uốn (đo lại flow trên ảnh đã uốn). 0 = tắt, 1 = thay bản đồ thị sai,
+// 2 = lấy lớn hơn của hai bản đồ. Độ lệch còn lại nhân kSeamResidualScale (lệch sau uốn lộ hơn thị sai đã uốn
+// khớp), trừ kSeamResidualFloorDeg (sai số đo).
+inline int kSeamResidual = 1;
+inline double kSeamResidualScale = 3.0;
+inline double kSeamResidualFloorDeg = 0.15;
 // Nới vùng thị sai ra bấy nhiêu độ để đường nối không đi sát mép vật gần.
 inline double kSeamParallaxGrowDeg = 1.0;
 // Thị sai đo được là trung bình có trọng số của các điểm flow đã chấp nhận trong bán kính này (Gaussian), chỉ
@@ -99,5 +114,10 @@ inline double kBridgeFillDeg = 2.0;     // bán kính điền chỗ chuỗi đ�
 
 // Ghi ảnh debug (bản đồ thị sai và đường nối ở khung đường nối) cạnh file kết quả.
 inline bool kDebugSeams = false;
+// Đo độ lệch còn lại sau uốn (quality.h) và ghi vào log. Tốn thêm vài giây.
+inline bool kDebugResidual = false;
+// Ghi phép xoay cuối cùng (<stem>_cams.txt) và trường uốn (<stem>_fields.bin, ~200 MB) để phân tích ngoài máy
+// (work/depthlab.py). Cần kèm kDebugSeams.
+inline bool kDebugDump = false;
 
 }  // namespace sphere

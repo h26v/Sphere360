@@ -8,7 +8,7 @@ namespace sphere {
 // khi ảnh chứa đỉnh/đáy hoặc vắt qua kinh tuyến 180°. Nếu có trường uốn, điểm (u, v) của khung lấy
 // màu từ hướng (u + dx, v + dy) — tức ảnh được uốn cho khớp với ảnh bên cạnh.
 Point warpSphere(const Mat &src, const Mat &K, const Mat &R, double s, Mat &dstImg, Mat &dstMask,
-                 const Field *field, double fieldShiftPx) {
+                 const Field *field, double fieldShiftPx, const Mat &srcMask) {
     Matx33d Kd, Rd;
     K.convertTo(Mat(Kd, false), CV_64F);
     R.convertTo(Mat(Rd, false), CV_64F);
@@ -69,7 +69,7 @@ Point warpSphere(const Mat &src, const Mat &K, const Mat &R, double s, Mat &dstI
     const int cols = x1 - x0, rows = y1 - y0;
     dstImg.create(rows, cols, src.type());
     dstMask.create(rows, cols, CV_8U);
-    Mat ones(src.size(), CV_8U, Scalar::all(255));
+    Mat ones = srcMask.empty() ? Mat(src.size(), CV_8U, Scalar::all(255)) : srcMask;
     const bool useField = field != nullptr && !field->empty();
 
     const int strip = 256;
