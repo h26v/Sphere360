@@ -37,7 +37,11 @@ final class BridgeRecorder {
     // Nhòe tối đa (pixel của khung cầu nối). Khi đang lia, OIS không bù được nên tính cả độ quét. Bộ ghép thu
     // nhỏ khung khoảng 3 lần nên 8 px ở đây còn chưa tới 3 px ở khung flow.
     private static final double MAX_BLUR_PX = 8.0;
-    private static final int MAX_FRAMES = 600;
+    // Trần tổng và trần mỗi khoảng giữa hai tấm. Bình thường một khoảng chỉ cần ~15 khung (30° / 2°); lúc chuyển
+    // hàng hoặc lia vòng tìm tấm kế, một khoảng từng ngốn tới 165 khung làm cạn trần 600 khi chưa xong nửa lượt
+    // (20261024_214627), nửa sau không còn khung nào.
+    private static final int MAX_FRAMES = 1200;
+    private static final int MAX_FRAMES_PER_GAP = 60;
     private static final int MAX_PENDING_WRITES = 3;
     private static final int JPEG_QUALITY = 80;
 
@@ -51,6 +55,7 @@ final class BridgeRecorder {
     private volatile int after = -1;   // chỉ số tấm chụp gần nhất
     private volatile float[] lastR;    // hướng (camera -> toàn cảnh) của khung hoặc tấm giữ gần nhất
     private volatile int kept, blurred;
+    private volatile int keptInGap;
     private volatile int blurStreak;               // số khung liền nhau bị bỏ vì nhòe
     private volatile long lastKeptMs, lastBlurMs;  // SystemClock.uptimeMillis
 
@@ -65,6 +70,7 @@ final class BridgeRecorder {
     void onStill(int index, float[] rotation) {
         after = index;
         lastR = rotation;
+        keptInGap = 0;
     }
 
     int kept() {
@@ -94,7 +100,8 @@ final class BridgeRecorder {
     void onImage(Image img, long exposureNs, long skewNs, boolean paused) {
         int a = after;
         float[] last = lastR;
-        if (a < 0 || last == null || paused || kept >= MAX_FRAMES || pendingWrites.get() >= MAX_PENDING_WRITES) {
+        if (a < 0 || last == null || paused || kept >= MAX_FRAMES || keptInGap >= MAX_FRAMES_PER_GAP
+                || pendingWrites.get() >= MAX_PENDING_WRITES) {
             return;
         }
         long start = img.getTimestamp();
@@ -127,6 +134,7 @@ final class BridgeRecorder {
         lastR = r;
         blurStreak = 0;
         lastKeptMs = SystemClock.uptimeMillis();
+        keptInGap++;
         int index = kept++;
         String name = String.format(Locale.US, "bridge_%03d.jpg", index);
         float blur = (float) blurPx;
