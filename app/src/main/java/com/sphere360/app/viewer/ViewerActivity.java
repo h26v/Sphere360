@@ -49,6 +49,10 @@ public class ViewerActivity extends Activity implements SensorEventListener, Pan
     private Sensor rotationSensor;
     private boolean gyro;
     private float[] deviceToWorld;
+    // Lọc rung tay cho chế độ con quay (xem OrientationFilter).
+    private final OrientationFilter filter = new OrientationFilter();
+    // Lấy mẫu cảm biến dày (~200 Hz) để bộ lọc có đủ mẫu; màn hình vẫn chỉ vẽ theo nhịp khung hình.
+    private static final int SENSOR_PERIOD_US = 5000;
     private double gyroOffset;
 
     private double yawDeg;
@@ -116,7 +120,8 @@ public class ViewerActivity extends Activity implements SensorEventListener, Pan
         super.onResume();
         glView.onResume();
         if (rotationSensor != null) {
-            sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME);
+            filter.reset();
+            sensorManager.registerListener(this, rotationSensor, SENSOR_PERIOD_US);
         }
     }
 
@@ -263,7 +268,9 @@ public class ViewerActivity extends Activity implements SensorEventListener, Pan
     @Override
     public void onSensorChanged(SensorEvent event) {
         float[] r = new float[9];
-        SensorManager.getRotationMatrixFromVector(r, event.values);
+        // Phóng to thì rung tay hiện rõ hơn trên màn hình, nên lọc mạnh hơn theo tỉ lệ góc nhìn.
+        double zoom = Math.max(0.3, Math.min(1.5, vFovDeg / DEFAULT_FOV));
+        SensorManager.getRotationMatrixFromVector(r, filter.filter(event.values, event.timestamp, zoom));
         float[] out = new float[9];
         int rot = getDisplay() != null ? getDisplay().getRotation() : Surface.ROTATION_0;
         switch (rot) {
