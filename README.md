@@ -12,6 +12,10 @@ Photos, Facebook… nhận ra là ảnh 360°.
   con quay, nhòe quá thì bỏ tấm và chụp lại.
 - **Khoá sáng, cân bằng trắng và lấy nét** theo tấm đầu tiên để các tấm cùng tông và cùng tiêu cự.
 - **Hai cách chụp**: kê máy cố định (27 tấm) hoặc cầm tay xoay người (34 tấm, chồng nhiều hơn).
+- **Chụp bằng gimbal** Osmo Mobile (thử trên OM7, trên chân máy): gimbal tự dò tầm quay ngang, tự quay tới từng
+  góc rồi chụp; góc ngoài tầm với thì chụp ở chỗ xa nhất tới được. Tầm quay ngang chỉ ~295–310° nên cuối lượt app
+  nhắc xoay gimbal nửa vòng quanh ốc gắn để chụp bù khe. Tâm xoay cố định nên chỗ nối lệch ít hơn hẳn cầm tay
+  (đo được ~0,04° so với 0,1–0,3°).
 - **Tuỳ chọn chụp đỉnh/đáy**: tắt được tấm thẳng lên hoặc thẳng xuống (vướng chân máy, chân người, hay lệch nhất
   khi cầm tay). Bộ ghép chiếu vùng quanh cực ra mặt phẳng tiếp xúc rồi tô mượt từ xung quanh (push-pull).
 - **Khung cầu nối**: trong lúc lia máy giữa hai tấm, app giữ thêm ảnh xám nhỏ (luồng YUV ~1440×1080) mỗi 2°
@@ -33,6 +37,7 @@ app/src/main/java/com/sphere360/app/
              RowProgressView     bản đồ các tấm theo hàng
              MotionLog           lịch sử con quay và hướng máy để đo nhòe lúc phơi sáng
              BridgeRecorder      giữ khung cầu nối từ luồng YUV khi đang lia máy
+             GimbalDriver        chụp bằng gimbal: dò tầm pan, đi từng góc, chụp bù khe pan
   stitch/    StitchActivity      chạy bộ ghép, hiện tiến độ, lưu vào Thư viện ảnh
              NativeStitcher      cầu nối JNI tới bộ ghép C++
              StitchInput         một lượt chụp (tấm + khung cầu nối) ở dạng mảng cho JNI
@@ -134,6 +139,12 @@ sau uốn (cả vùng chồng và riêng trên đường nối) và các cặp l
 cùng `t1_cams.txt` và trường uốn `t1_fields.bin` (~200 MB) để phân tích trên máy tính. Thêm `kUseBridges=0` để ghép không dùng khung cầu nối. `--es cmd params` ghi danh sách
 tham số ra `files/params.txt`. Script `tools/dbg.sh` gói các lệnh này (cài APK, ghép, kéo kết quả về).
 
+Mở màn chụp bằng gimbal (không cần bấm trên máy; `zenith`, `nadir` ghi đè hai công tắc đỉnh/đáy):
+
+```bash
+adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd capture --ez gimbal true --ez zenith false
+```
+
 Thử gimbal (`probe.GimbalProbeActivity`, cũng chỉ adb mở được; log thẻ `GimbalProbe` và
 `files/gimbal/probe_*.txt`). OM7 bỏ qua lệnh quay theo góc (`04/14`) mà OM2–OM4 dùng nhưng nhận lệnh tốc độ
 (`04/0C`), nên mọi lệnh quay đi qua vòng kín `GimbalAim`. `map` dò tầm với ở tư thế đang đặt, ghi
@@ -157,6 +168,9 @@ adb shell am start -n com.sphere360.app/.probe.GimbalProbeActivity --es do map
   bắt được độ lệch trên ~6–10°. Khung cầu nối chỉ có giữa hai tấm chụp liền nhau (cùng hàng), không có cho
   đường nối giữa hai hàng.
 - Đáy ảnh thấy chân người chụp hoặc chỗ kê (tắt chụp mặt đất thì vùng này được tô mờ thay vào).
+- Chụp bằng gimbal OM7: ngẩng/cúi chỉ trong khoảng ~60° (khoảng này trượt lên xuống theo hướng quay ngang),
+  nên trần từ ~50–60° trở lên và đáy từ ~60° trở xuống được tô mờ. Nghiêng tay cầm chỉ dời chỗ hở đi chứ không
+  thu nhỏ lại (xem `tools/gimbal_sweet.py`).
 - Trình xem trong app giới hạn ảnh ở 8192 px chiều ngang.
 - Việc ghép chạy trong màn hình ghép, chưa chạy nền.
 

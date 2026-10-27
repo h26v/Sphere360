@@ -11,6 +11,8 @@ public final class Settings {
     /** Chụp thêm tấm thẳng lên (đỉnh trời) / thẳng xuống (mặt đất). Tắt thì bộ ghép tô vùng đó từ xung quanh. */
     public static final String PREF_CAPTURE_ZENITH = "capture_zenith";
     public static final String PREF_CAPTURE_NADIR = "capture_nadir";
+    /** Chụp bằng gimbal Osmo Mobile: gimbal tự quay tới từng góc. */
+    public static final String PREF_GIMBAL = "capture_gimbal";
 
     private Settings() {}
 }

@@ -431,6 +431,17 @@ public class MainActivity extends Activity {
                 "hoặc mặt đất dính chân máy, chân người chụp. Chụp cầm tay thì đây là hai tấm dễ lệch nhất ở chỗ nối.",
                 13, Ui.TEXT_2), u.lp(-1, -2, 4));
 
+        box.addView(u.overline("Gimbal"), u.lp(-1, -2, 20));
+        Switch useGimbal = new Switch(this);
+        useGimbal.setText("Chụp bằng gimbal Osmo Mobile");
+        useGimbal.setTextColor(Ui.TEXT);
+        useGimbal.setTextSize(15);
+        useGimbal.setChecked(prefs.getBoolean(Settings.PREF_GIMBAL, false));
+        useGimbal.setOnCheckedChangeListener((b, on) -> prefs.edit().putBoolean(Settings.PREF_GIMBAL, on).apply());
+        box.addView(useGimbal, u.lp(-1, -2, 8));
+        box.addView(u.text("Đặt gimbal lên chân máy, kẹp máy dọc, thoát DJI Mimo. Gimbal tự dò tầm quay rồi tự quay tới " +
+                "từng góc và chụp. Góc ngoài tầm với thì chụp ở chỗ xa nhất tới được.", 13, Ui.TEXT_2), u.lp(-1, -2, 4));
+
         box.addView(u.overline("Thử nghiệm"), u.lp(-1, -2, 20));
         Button probe = u.secondary("Thử ARCore (vị trí + độ sâu)");
         probe.setOnClickListener(v -> {

@@ -5,6 +5,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Con quay đọc ở tốc độ cao nhất (SENSOR_DELAY_FASTEST) để đo rung lúc phơi sáng: Android 12+ đòi quyền này. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
     <!-- Điều khiển gimbal Osmo Mobile qua Bluetooth LE (không cần vị trí). -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />

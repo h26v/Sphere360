@@ -24,6 +24,7 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -53,6 +54,9 @@ import com.sphere360.app.data.Session;
 import com.sphere360.app.data.Settings;
 import com.sphere360.app.stitch.StitchActivity;
 import com.sphere360.app.ui.Ui;
+import com.sphere360.app.gimbal.Duml;
+import com.sphere360.app.gimbal.GimbalAim;
+import com.sphere360.app.gimbal.OsmoGimbal;
 import com.sphere360.app.util.Rot;
 
 /** Màn hình chụp: hướng dẫn đưa máy tới từng góc và tự chụp khi máy đứng yên đúng chỗ. */
@@ -109,6 +113,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     private TextView counter;
     private RowProgressView rowProgress;
     private Button stitchButton;
+    private Button continueButton;   // chế độ gimbal: bấm sau khi xoay gimbal để chụp bù khe pan
 
     private SensorManager sensorManager;
     private Sensor rotationSensor;
@@ -152,6 +157,15 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     }
     private int frameCounter;
 
+    // Chụp bằng gimbal Osmo Mobile (Settings.PREF_GIMBAL hoặc extra "gimbal"): gimbal tự đưa máy tới từng góc.
+    private static final int REQ_BLUETOOTH = 2;
+    private boolean gimbalMode;
+    private OsmoGimbal gimbal;
+    private GimbalDriver driver;
+    private volatile boolean gimbalReady;
+    private String gimbalStatusText = "Gimbal: đang kết nối…";
+    private float[] lastPose;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -174,8 +188,12 @@ public class CaptureActivity extends Activity implements SensorEventListener {
 
         android.content.SharedPreferences prefs = getSharedPreferences(Settings.PREFS, MODE_PRIVATE);
         handheld = prefs.getBoolean(Settings.PREF_HANDHELD, false);
+        Intent in = getIntent();
+        gimbalMode = in.getBooleanExtra("gimbal", prefs.getBoolean(Settings.PREF_GIMBAL, false));
+        if (gimbalMode) handheld = false;
         targets = CapturePlan.create(spec.hFovDeg, spec.vFovDeg, handheld,
-                prefs.getBoolean(Settings.PREF_CAPTURE_ZENITH, true), prefs.getBoolean(Settings.PREF_CAPTURE_NADIR, true));
+                in.getBooleanExtra("zenith", prefs.getBoolean(Settings.PREF_CAPTURE_ZENITH, true)),
+                in.getBooleanExtra("nadir", prefs.getBoolean(Settings.PREF_CAPTURE_NADIR, true)));
         session = Session.create(this, spec.focalPx, spec.uprightWidth(), spec.uprightHeight(), targets.size());
         if (spec.bridgeSize != null) {
             session.bridgeFocalPx = spec.bridgeFocalPx;
@@ -196,6 +214,85 @@ public class CaptureActivity extends Activity implements SensorEventListener {
 
         buildLayout();
         updateCounter();
+        if (gimbalMode) setupGimbal();
+    }
+
+    // ---------------------------------------------------------------- gimbal
+
+    private void setupGimbal() {
+        gimbal = new OsmoGimbal(this, new OsmoGimbal.Listener() {
+            @Override
+            public void onLog(String line) {
+                Log.i("Gimbal", line);
+            }
+
+            @Override
+            public void onState(String state, boolean ready) {
+                gimbalReady = ready;
+                if (driver == null || !driver.started()) gimbalStatus("Gimbal: " + state);
+            }
+
+            @Override
+            public void onPacket(Duml.Packet p) {
+            }
+        });
+        GimbalAim aim = new GimbalAim(gimbal, line -> Log.i("GimbalAim", line));
+        driver = new GimbalDriver(gimbal, aim, targets, spec.hFovDeg, new GimbalDriver.Host() {
+            @Override
+            public void gimbalStatus(String st) {
+                CaptureActivity.this.gimbalStatus(st);
+            }
+
+            @Override
+            public boolean readyToShoot(boolean requireSteady) {
+                return camera != null && captureSession != null && !busy && lastPose != null
+                        && (!requireSteady || angularSpeed < steadyLimit());
+            }
+
+            @Override
+            public void shoot(int target) {
+                takePicture(target, lastPose);
+            }
+
+            @Override
+            public void askRotate(String msg) {
+                runOnUiThread(() -> continueButton.setVisibility(View.VISIBLE));
+            }
+
+            @Override
+            public void allDone() {
+                runOnUiThread(() -> openStitcher());
+            }
+        });
+        String[] perms = Build.VERSION.SDK_INT >= 31
+                ? new String[]{android.Manifest.permission.BLUETOOTH_SCAN, android.Manifest.permission.BLUETOOTH_CONNECT}
+                : new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION};
+        for (String p : perms) {
+            if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(perms, REQ_BLUETOOTH);
+                return;
+            }
+        }
+        gimbal.connect(null);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQ_BLUETOOTH) return;
+        for (int r : results) {
+            if (r != PackageManager.PERMISSION_GRANTED) {
+                gimbalStatus("Gimbal: không có quyền Bluetooth");
+                return;
+            }
+        }
+        gimbal.connect(null);
+    }
+
+    private void gimbalStatus(String st) {
+        gimbalStatusText = st;
+        Log.i("GimbalDriver", st);
+        runOnUiThread(() -> instruction.setText(st));
     }
 
     private void buildLayout() {
@@ -262,6 +359,13 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         rowProgress = new RowProgressView(this);
         rowProgress.setTargets(targets);
         bottom.addView(rowProgress, new LinearLayout.LayoutParams(-1, -2));
+        continueButton = u.primary("Đã xoay xong · chụp tiếp");
+        continueButton.setVisibility(View.GONE);
+        continueButton.setOnClickListener(v -> {
+            continueButton.setVisibility(View.GONE);
+            if (driver != null) driver.continueAfterRotate();
+        });
+        bottom.addView(continueButton, u.lp(-1, -2, 12));
 
         LinearLayout bar = u.row();
         Button cancel = u.overlay("Thoát");
@@ -313,11 +417,13 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_FASTEST);
         }
         if (preview.isAvailable()) openCamera();
+        if (driver != null) driver.resume();
     }
 
     @Override
     protected void onPause() {
         resumed = false;
+        if (driver != null) driver.pause();
         sensorManager.unregisterListener(this);
         closeCamera();
         if (cameraThread != null) {
@@ -343,6 +449,8 @@ public class CaptureActivity extends Activity implements SensorEventListener {
 
     @Override
     protected void onDestroy() {
+        if (driver != null) driver.pause();
+        if (gimbal != null) gimbal.close();
         if (shutter != null) shutter.release();
         if (bridges != null) bridges.shutdown();
         if (session != null && session.frames.isEmpty()) session.deleteAll();
@@ -638,6 +746,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             new File(session.dir, name).delete();
             lastRejectPx = e.blurPx;
             rejectNoticeUntil = SystemClock.uptimeMillis() + REJECT_NOTICE_MS;
+            if (driver != null) driver.onShot(false);
             return;
         }
 
@@ -670,7 +779,9 @@ public class CaptureActivity extends Activity implements SensorEventListener {
             });
         }
         updateCounter();
-        if (nextTarget() < 0) openStitcher();
+        // Chế độ gimbal: driver quyết định khi nào xong (còn có thể chụp bù khe pan).
+        if (driver != null) driver.onShot(true);
+        else if (nextTarget() < 0) openStitcher();
     }
 
     // ---------------------------------------------------------------- guidance
@@ -712,6 +823,12 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         motion.addPose(event.timestamp, a);
         float[] forward = Rot.apply(a, 0, 0, -1);
         float[] right = Rot.apply(a, 1, 0, 0);
+        lastPose = a;
+        if (driver != null) {
+            driver.onOrientation(Math.toDegrees(Math.atan2(forward[0], forward[1])),
+                    Math.toDegrees(Math.asin(Math.max(-1, Math.min(1, forward[2])))));
+            if (!driver.started() && gimbalReady && captureSession != null) driver.start();
+        }
 
 
         int best = -1;
@@ -742,7 +859,7 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         boolean steady = angularSpeed < speedLimit;
 
         float hold = 0;
-        if (aligned && steady && !busy && camera != null) {
+        if (!gimbalMode && aligned && steady && !busy && camera != null) {
             long now = SystemClock.uptimeMillis();
             if (holdStart == 0) holdStart = now;
             hold = Math.min(1f, (now - holdStart) / (float) SETTLE_MS);
@@ -762,7 +879,9 @@ public class CaptureActivity extends Activity implements SensorEventListener {
     private void updateHint(CapturePlan.Target t, boolean near, boolean aligned, boolean rollOk, boolean steady,
                             double roll, double limit, float hold) {
         String text;
-        if (busy) {
+        if (gimbalMode) {
+            text = busy ? gimbalStatusText + " · đang chụp" : gimbalStatusText;
+        } else if (busy) {
             text = "Đang chụp… giữ yên";
         } else if (SystemClock.uptimeMillis() < rejectNoticeUntil) {
             text = "Tấm vừa rồi bị rung, giữ yên để chụp lại";

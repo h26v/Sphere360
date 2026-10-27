@@ -31,6 +31,7 @@ import com.sphere360.app.ui.Ui;
  * adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd stitch --es session 20261023_171607 \
  *     [--ei width 8192] [--ez deghost true] [--es out dbg.jpg] [--es params "kSeamParallaxWeight=4,kDebugSeams=1"]
  * adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd params
+ * adb shell am start -n com.sphere360.app/.debug.DebugActivity --es cmd capture --ez gimbal true [--ez zenith false]
  * </pre>
  *
  * Khung cầu nối của lượt (nếu có) được dùng khi kUseBridges=1 (mặc định); thêm "kUseBridges=0" vào params để so.
@@ -94,6 +95,15 @@ public class DebugActivity extends Activity {
                     show("ERROR " + e);
                 }
                 break;
+            case "capture": {
+                // Mở màn chụp (không xuất ra ngoài được nên đi qua đây); extra gimbal/zenith/nadir chuyển tiếp nguyên.
+                Intent i = new Intent(this, com.sphere360.app.capture.CaptureActivity.class);
+                for (String k : new String[]{"gimbal", "zenith", "nadir"})
+                    if (intent.hasExtra(k)) i.putExtra(k, intent.getBooleanExtra(k, false));
+                startActivity(i);
+                show("DONE capture");
+                break;
+            }
             default:
                 show("ERROR lệnh không biết: " + cmd);
         }
