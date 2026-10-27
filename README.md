@@ -44,7 +44,11 @@ app/src/main/java/com/sphere360/app/
   ui/        Ui                  màu và thành phần giao diện dùng chung
   util/      Rot                 phép tính ma trận xoay 3x3
   probe/     ArProbeActivity     thử nghiệm ARCore (vị trí 6 bậc tự do, Depth API)
+             GimbalProbeActivity thử gimbal Osmo Mobile; GimbalMapper dò tầm với các khớp ở một tư thế
   debug/     DebugActivity       lệnh debug qua adb (xem dưới)
+  gimbal/    OsmoGimbal          điều khiển gimbal Osmo Mobile qua Bluetooth LE (dịch vụ FFF0, gói DUML)
+             Duml                dựng và đọc gói DUML (CRC8, CRC16)
+             GimbalAim           vòng kín: đưa máy tới hướng cho trước bằng lệnh tốc độ và con quay của máy
 
 app/src/main/cpp/                bộ ghép ảnh cầu (C++17, OpenCV)
   stitcher      toàn bộ quy trình ghép (không phụ thuộc JNI)
@@ -130,6 +134,17 @@ sau uốn (cả vùng chồng và riêng trên đường nối) và các cặp l
 cùng `t1_cams.txt` và trường uốn `t1_fields.bin` (~200 MB) để phân tích trên máy tính. Thêm `kUseBridges=0` để ghép không dùng khung cầu nối. `--es cmd params` ghi danh sách
 tham số ra `files/params.txt`. Script `tools/dbg.sh` gói các lệnh này (cài APK, ghép, kéo kết quả về).
 
+Thử gimbal (`probe.GimbalProbeActivity`, cũng chỉ adb mở được; log thẻ `GimbalProbe` và
+`files/gimbal/probe_*.txt`). OM7 bỏ qua lệnh quay theo góc (`04/14`) mà OM2–OM4 dùng nhưng nhận lệnh tốc độ
+(`04/0C`), nên mọi lệnh quay đi qua vòng kín `GimbalAim`. `map` dò tầm với ở tư thế đang đặt, ghi
+`files/gimbal/map_*.csv` cho `tools/gimbal_cover.py`:
+
+```bash
+adb shell am start -n com.sphere360.app/.probe.GimbalProbeActivity --es do connect
+adb shell am start -n com.sphere360.app/.probe.GimbalProbeActivity --es do goto --ef dyaw 40 --ef dpitch 0
+adb shell am start -n com.sphere360.app/.probe.GimbalProbeActivity --es do map
+```
+
 ## Mẹo chụp
 
 - Ống kính càng đứng yên một chỗ thì càng ít lệch: tốt nhất là xoay máy quanh một chỗ kê (hộp, gậy, chân máy).
@@ -153,4 +168,6 @@ Cần Python với `opencv-python` và `numpy`.
 python tools/grid_views.py pano.jpg out      # out_eq.jpg, out_grid.jpg (12 góc nhìn), out_poles.jpg
 python tools/detail_views.py pano.jpg out.jpg 0,30,80 90,0,70   # các góc yaw,pitch,fov tuỳ chọn
 python tools/focal_probe.py <thư mục lượt chụp>                 # đo tiêu cự thật từ các cặp ảnh kề
+python tools/gimbal_cover.py map_20261027_101412.csv            # độ phủ mặt cầu của một tư thế gimbal
+python tools/gimbal_sweet.py                                    # mô hình: độ phủ theo độ nghiêng tay cầm
 ```

@@ -38,6 +38,7 @@ import com.sphere360.app.capture.CaptureActivity;
 import com.sphere360.app.data.Session;
 import com.sphere360.app.data.Settings;
 import com.sphere360.app.probe.ArProbeActivity;
+import com.sphere360.app.probe.GimbalProbeActivity;
 import com.sphere360.app.stitch.StitchActivity;
 import com.sphere360.app.ui.Ui;
 import com.sphere360.app.viewer.ViewerActivity;
@@ -437,6 +438,13 @@ public class MainActivity extends Activity {
             startActivity(new Intent(this, ArProbeActivity.class));
         });
         box.addView(probe, u.lp(-1, -2, 8));
+        Button gimbalProbe = u.secondary("Thử gimbal Osmo Mobile");
+        gimbalProbe.setOnClickListener(v -> {
+            d.dismiss();
+            startActivity(new Intent(this, GimbalProbeActivity.class));
+        });
+        box.addView(gimbalProbe, u.lp(-1, -2, 8));
+
         Button done = u.primary("Xong");
         done.setOnClickListener(v -> d.dismiss());
         box.addView(done, u.lp(-1, -2, 20));
