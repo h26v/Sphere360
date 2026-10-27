@@ -85,6 +85,125 @@ Mat loadUpright(const std::string &path) {
     return img;
 }
 
+// Điền chỗ trống của ảnh theo kiểu push-pull: thu nhỏ dần (trung bình có trọng số các điểm có dữ liệu), rồi
+// phóng ngược lên, chỗ trống ở mỗi tầng lấy từ tầng thô hơn. Ra màu mượt nối liền với xung quanh.
+void pushPullFill(Mat &img, const Mat &known) {
+    std::vector<Mat> cols, wts;
+    Mat c, w;
+    img.convertTo(c, CV_32FC3);
+    known.convertTo(w, CV_32F, 1.0 / 255);
+    {
+        std::vector<Mat> ch;
+        split(c, ch);
+        for (Mat &x : ch) x = x.mul(w);
+        merge(ch, c);
+    }
+    cols.push_back(c);
+    wts.push_back(w);
+    while (std::min(cols.back().cols, cols.back().rows) > 4) {
+        Mat c2, w2;
+        resize(cols.back(), c2, Size(), 0.5, 0.5, INTER_AREA);
+        resize(wts.back(), w2, Size(), 0.5, 0.5, INTER_AREA);
+        cols.push_back(c2);
+        wts.push_back(w2);
+    }
+    // Tầng thô nhất: chỗ nào vẫn trống thì lấy trung bình cả tầng.
+    Mat filled;
+    {
+        Mat &cc = cols.back(), &ww = wts.back();
+        const double sw = sum(ww)[0];
+        Scalar mean = sw > 0 ? sum(cc) * (1.0 / sw) : Scalar::all(0);
+        filled = Mat(cc.size(), CV_32FC3);
+        for (int y = 0; y < cc.rows; ++y)
+            for (int x = 0; x < cc.cols; ++x) {
+                const float wv = ww.at<float>(y, x);
+                const Vec3f v = cc.at<Vec3f>(y, x);
+                filled.at<Vec3f>(y, x) = wv > 1e-4f ? v / wv : Vec3f((float) mean[0], (float) mean[1], (float) mean[2]);
+            }
+    }
+    for (int l = (int) cols.size() - 2; l >= 0; --l) {
+        Mat up;
+        resize(filled, up, cols[l].size(), 0, 0, INTER_LINEAR);
+        Mat &cc = cols[l], &ww = wts[l];
+        filled = Mat(cc.size(), CV_32FC3);
+        for (int y = 0; y < cc.rows; ++y)
+            for (int x = 0; x < cc.cols; ++x) {
+                // Có đủ dữ liệu (trọng số >= 1) thì giữ, thiếu thì trộn thêm từ tầng thô.
+                const float wv = std::min(1.f, ww.at<float>(y, x));
+                const Vec3f own = ww.at<float>(y, x) > 1e-4f ? cc.at<Vec3f>(y, x) / ww.at<float>(y, x) : Vec3f();
+                filled.at<Vec3f>(y, x) = own * wv + up.at<Vec3f>(y, x) * (1 - wv);
+            }
+    }
+    filled.convertTo(img, img.type());
+}
+
+// Lấp chỗ không ảnh nào phủ quanh hai cực (khi không chụp tấm đỉnh / đáy). Vùng quanh cực được chiếu ra mặt
+// phẳng tiếp xúc (ở equirect cực bị kéo thành cả một hàng), điền push-pull rồi chiếu ngược vào đúng chỗ trống.
+void fillPoleHoles(Mat &pano, const Mat &covered) {
+    const int W = pano.cols, H = pano.rows;
+    const double s = W / (2 * CV_PI);
+    for (int pole = -1; pole <= 1; pole += 2) {
+        // Chỗ trống trong 60° quanh cực (máy không ngẩng/cúi tới thì chỗ hở có thể xa cực tới ~50°): góc lớn nhất tới cực.
+        const int band = (int) std::ceil(s * 60 * CV_PI / 180);
+        const int y0 = pole < 0 ? 0 : std::max(0, H - band), y1 = pole < 0 ? std::min(H, band) : H;
+        double maxPolar = -1;
+        int holes = 0;
+        for (int y = y0; y < y1; ++y) {
+            const uchar *cr = covered.ptr<uchar>(y);
+            for (int x = 0; x < W; ++x)
+                if (!cr[x]) {
+                    ++holes;
+                    const double polar = pole < 0 ? (y + 0.5) / s : (H - y - 0.5) / s;
+                    maxPolar = std::max(maxPolar, polar);
+                }
+        }
+        if (holes == 0) continue;
+        // Mặt phẳng tiếp xúc tại cực, phủ thêm 8° quanh chỗ trống để có màu xung quanh.
+        const double R = std::min(80.0 * CV_PI / 180, maxPolar + 8 * CV_PI / 180);
+        const int N = 1024;
+        const double f = N / 2.0 / std::tan(R);
+        // Điểm (X, Z) trên mặt phẳng <-> hướng (X, pole * f, Z) trong hệ toàn cảnh (y hướng xuống).
+        Mat mx(N, N, CV_32F), my(N, N, CV_32F);
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < N; ++i) {
+                const double X = i - N / 2.0 + 0.5, Z = j - N / 2.0 + 0.5;
+                const double nrm = std::sqrt(X * X + f * f + Z * Z);
+                const double dy = pole * f / nrm;
+                mx.at<float>(j, i) = (float) (s * std::atan2(X, Z) + W / 2.0);
+                my.at<float>(j, i) = (float) (s * (CV_PI - std::acos(std::max(-1.0, std::min(1.0, dy)))));
+            }
+        Mat plane, known;
+        remap(pano, plane, mx, my, INTER_LINEAR, BORDER_WRAP);
+        remap(covered, known, mx, my, INTER_NEAREST, BORDER_WRAP);
+        erode(known, known, Mat());  // bỏ viền mép chỗ trống (màu trộn với đen)
+        pushPullFill(plane, known);
+        // Chiếu ngược: chỉ ghi vào chỗ trống.
+        for (int y = y0; y < y1; ++y) {
+            const uchar *cr = covered.ptr<uchar>(y);
+            Vec3b *pr = pano.ptr<Vec3b>(y);
+            const double ph = std::max(1e-6, std::min(CV_PI - 1e-6, (y + 0.5) / s));
+            for (int x = 0; x < W; ++x) {
+                if (cr[x]) continue;
+                const double th = (x + 0.5 - W / 2.0) / s;
+                const double dx = std::sin(ph) * std::sin(th), dz = std::sin(ph) * std::cos(th);
+                const double dy = -std::cos(ph);
+                if (dy * pole <= 1e-6) continue;
+                const double px = f * dx / (dy * pole) + N / 2.0 - 0.5, pz = f * dz / (dy * pole) + N / 2.0 - 0.5;
+                const int ix = (int) std::floor(px), iz = (int) std::floor(pz);
+                if (ix < 0 || iz < 0 || ix + 1 >= N || iz + 1 >= N) continue;
+                const float ax = (float) (px - ix), az = (float) (pz - iz);
+                Vec3f v = Vec3f(plane.at<Vec3b>(iz, ix)) * (1 - ax) * (1 - az) +
+                          Vec3f(plane.at<Vec3b>(iz, ix + 1)) * ax * (1 - az) +
+                          Vec3f(plane.at<Vec3b>(iz + 1, ix)) * (1 - ax) * az +
+                          Vec3f(plane.at<Vec3b>(iz + 1, ix + 1)) * ax * az;
+                pr[x] = Vec3b(saturate_cast<uchar>(v[0]), saturate_cast<uchar>(v[1]), saturate_cast<uchar>(v[2]));
+            }
+        }
+        LOGI("Lấp vùng %s không có ảnh: %d điểm, tới %.1f° quanh cực", pole < 0 ? "đỉnh trời" : "mặt đất", holes,
+             maxPolar * 180 / CV_PI);
+    }
+}
+
 // ------------------------------------------------------------------------------ hình học
 
 }  // namespace
@@ -334,14 +453,30 @@ std::string stitch(const std::vector<std::string> &paths, const std::vector<Mat>
     Mat ext;
     result.convertTo(ext, CV_8U);
     result.release();
-    // Trộn chuyển dải lặp bên phải vào mép trái để kinh tuyến 180° liền mạch.
+    // Trộn chuyển dải lặp bên phải vào mép trái để kinh tuyến 180° liền mạch. Bên nào không có ảnh thì lấy bên
+    // kia, không trộn với màu đen.
+    Mat covered = resultMask(Rect(0, 0, outWidth, outHeight)).clone();
     for (int c = 0; c < margin && outWidth + c < ext.cols; ++c) {
-        double w = (c + 0.5) / margin;
-        Mat dst = ext.col(c);
-        addWeighted(ext.col(outWidth + c), 1.0 - w, ext.col(c), w, 0, dst);
+        const float w = (float) ((c + 0.5) / margin);
+        for (int y = 0; y < outHeight; ++y) {
+            const bool left = resultMask.at<uchar>(y, c) != 0, right = resultMask.at<uchar>(y, outWidth + c) != 0;
+            Vec3b &dst = ext.at<Vec3b>(y, c);
+            const Vec3b src = ext.at<Vec3b>(y, outWidth + c);
+            if (left && right) {
+                for (int k = 0; k < 3; ++k) dst[k] = saturate_cast<uchar>(src[k] * (1 - w) + dst[k] * w);
+            } else if (right) {
+                dst = src;
+            }
+            if (right) covered.at<uchar>(y, c) = 255;
+        }
     }
+    resultMask.release();
     Mat out = ext(Rect(0, 0, outWidth, outHeight)).clone();
     ext.release();
+
+    // Không chụp tấm đỉnh / đáy thì quanh cực có chỗ không ảnh nào phủ.
+    fillPoleHoles(out, covered);
+    covered.release();
 
     std::vector<int> params = {IMWRITE_JPEG_QUALITY, jpegQuality};
     if (!imwrite(outPath, out, params)) return "Không ghi được file " + outPath;

@@ -171,9 +171,13 @@ public class MainActivity extends Activity {
             modeTabs[i].setBackground(on ? u.round(Ui.TEXT, 11) : null);
             modeTabs[i].setTextColor(on ? Ui.BG : Ui.TEXT_2);
         }
+        int skipped = (prefs.getBoolean(Settings.PREF_CAPTURE_ZENITH, true) ? 0 : 1)
+                + (prefs.getBoolean(Settings.PREF_CAPTURE_NADIR, true) ? 0 : 1);
         modeNote.setText(handheld
-                ? "Xoay cả người, kẹp khuỷu tay sát người và giữ máy sát mặt. App chụp dày hơn (khoảng 34 tấm) để chỗ nối ít lệch."
-                : "Xoay máy quanh một chỗ kê (hộp, gậy, chân máy) sao cho ống kính gần như đứng yên. Đẹp nhất, khoảng 27 tấm.");
+                ? "Xoay cả người, kẹp khuỷu tay sát người và giữ máy sát mặt. App chụp dày hơn (khoảng "
+                        + (34 - skipped) + " tấm) để chỗ nối ít lệch."
+                : "Xoay máy quanh một chỗ kê (hộp, gậy, chân máy) sao cho ống kính gần như đứng yên. Đẹp nhất, khoảng "
+                        + (27 - skipped) + " tấm.");
     }
 
     private View tipsCard() {
@@ -407,6 +411,25 @@ public class MainActivity extends Activity {
         box.addView(u.text("Bật: vật ở gần ít bị nhân đôi. Tắt: giữ nguyên hình học, chỗ lệch nhiều có thể chồng hình. " +
                 "Đổi xong bấm \"Ghép lại\" để so.", 13, Ui.TEXT_2), u.lp(-1, -2, 4));
 
+        box.addView(u.overline("Đỉnh trời và mặt đất"), u.lp(-1, -2, 20));
+        String[][] poles = {{Settings.PREF_CAPTURE_ZENITH, "Chụp đỉnh trời (thẳng lên)"},
+                {Settings.PREF_CAPTURE_NADIR, "Chụp mặt đất (thẳng xuống)"}};
+        for (String[] pole : poles) {
+            Switch sw = new Switch(this);
+            sw.setText(pole[1]);
+            sw.setTextColor(Ui.TEXT);
+            sw.setTextSize(15);
+            sw.setChecked(prefs.getBoolean(pole[0], true));
+            sw.setOnCheckedChangeListener((b, on) -> {
+                prefs.edit().putBoolean(pole[0], on).apply();
+                updateModeTabs();
+            });
+            box.addView(sw, u.lp(-1, -2, 8));
+        }
+        box.addView(u.text("Tắt thì bớt một tấm và vùng đó được tô mờ từ xung quanh. Hợp khi không cần trần hay sàn, " +
+                "hoặc mặt đất dính chân máy, chân người chụp. Chụp cầm tay thì đây là hai tấm dễ lệch nhất ở chỗ nối.",
+                13, Ui.TEXT_2), u.lp(-1, -2, 4));
+
         box.addView(u.overline("Thử nghiệm"), u.lp(-1, -2, 20));
         Button probe = u.secondary("Thử ARCore (vị trí + độ sâu)");
         probe.setOnClickListener(v -> {
@@ -414,7 +437,6 @@ public class MainActivity extends Activity {
             startActivity(new Intent(this, ArProbeActivity.class));
         });
         box.addView(probe, u.lp(-1, -2, 8));
-
         Button done = u.primary("Xong");
         done.setOnClickListener(v -> d.dismiss());
         box.addView(done, u.lp(-1, -2, 20));

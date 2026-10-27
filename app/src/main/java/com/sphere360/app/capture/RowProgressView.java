@@ -70,15 +70,17 @@ final class RowProgressView extends View {
     @Override
     protected void onDraw(Canvas c) {
         if (targets == null) return;
-        float rowH = getHeight() / (float) ROW_ORDER.length;
         int widest = 1;
         List<List<Integer>> rows = new ArrayList<>();
         for (int r : ROW_ORDER) {
             List<Integer> idx = new ArrayList<>();
             for (int i = 0; i < targets.size(); i++) if (targets.get(i).row == r) idx.add(i);
+            if (idx.isEmpty()) continue;  // không chụp đỉnh / đáy
             rows.add(idx);
             widest = Math.max(widest, idx.size());
         }
+        if (rows.isEmpty()) return;
+        float rowH = getHeight() / (float) rows.size();
         float step = Math.min(18 * dp, getWidth() * 0.8f / widest);
         float radius = Math.min(4 * dp, step * 0.32f);
         drawTrail(c, rows, rowH, step);

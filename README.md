@@ -12,6 +12,8 @@ Photos, Facebook… nhận ra là ảnh 360°.
   con quay, nhòe quá thì bỏ tấm và chụp lại.
 - **Khoá sáng, cân bằng trắng và lấy nét** theo tấm đầu tiên để các tấm cùng tông và cùng tiêu cự.
 - **Hai cách chụp**: kê máy cố định (27 tấm) hoặc cầm tay xoay người (34 tấm, chồng nhiều hơn).
+- **Tuỳ chọn chụp đỉnh/đáy**: tắt được tấm thẳng lên hoặc thẳng xuống (vướng chân máy, chân người, hay lệch nhất
+  khi cầm tay). Bộ ghép chiếu vùng quanh cực ra mặt phẳng tiếp xúc rồi tô mượt từ xung quanh (push-pull).
 - **Khung cầu nối**: trong lúc lia máy giữa hai tấm, app giữ thêm ảnh xám nhỏ (luồng YUV ~1440×1080) mỗi 2°
   kèm hướng máy, để bộ ghép đo được độ lệch lớn của vật gần giữa hai tấm.
 - **Ghép trên máy** bằng bộ ghép C++/OpenCV riêng: căn góc theo điểm đặc trưng có neo trọng lực, uốn ảnh theo
@@ -139,7 +141,7 @@ tham số ra `files/params.txt`. Script `tools/dbg.sh` gói các lệnh này (c�
 - Vật rất gần máy (dưới ~1 m) khi chụp cầm tay vẫn có thể gãy hoặc nhân đôi ở chỗ nối: optical flow không
   bắt được độ lệch trên ~6–10°. Khung cầu nối chỉ có giữa hai tấm chụp liền nhau (cùng hàng), không có cho
   đường nối giữa hai hàng.
-- Đáy ảnh thấy chân người chụp hoặc chỗ kê.
+- Đáy ảnh thấy chân người chụp hoặc chỗ kê (tắt chụp mặt đất thì vùng này được tô mờ thay vào).
 - Trình xem trong app giới hạn ảnh ở 8192 px chiều ngang.
 - Việc ghép chạy trong màn hình ghép, chưa chạy nền.
 

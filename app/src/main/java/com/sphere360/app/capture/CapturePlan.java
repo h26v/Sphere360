@@ -38,7 +38,8 @@ final class CapturePlan {
 
     static final String[] ROW_NAMES = {"Hàng ngang", "Hàng trên", "Hàng dưới", "Đỉnh trời", "Mặt đất"};
 
-    static List<Target> create(double hFovDeg, double vFovDeg, boolean handheld) {
+    /** zenith, nadir: có chụp tấm thẳng lên / thẳng xuống không. */
+    static List<Target> create(double hFovDeg, double vFovDeg, boolean handheld, boolean zenith, boolean nadir) {
         List<Target> list = new ArrayList<>();
         double overlap = handheld ? OVERLAP_HANDHELD : OVERLAP;
         double rowPitch = Math.min(60, vFovDeg * 0.62);
@@ -57,8 +58,8 @@ final class CapturePlan {
         addRow(list, 1, rowPitch, n1, 180.0 / n1);
         addRow(list, 2, -rowPitch, n1, 180.0 / n1);
 
-        list.add(new Target(3, 0, 90));
-        list.add(new Target(4, 0, -90));
+        if (zenith) list.add(new Target(3, 0, 90));
+        if (nadir) list.add(new Target(4, 0, -90));
         return list;
     }
 

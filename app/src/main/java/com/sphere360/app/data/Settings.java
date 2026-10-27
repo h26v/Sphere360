@@ -8,6 +8,9 @@ public final class Settings {
     public static final int DEFAULT_OUTPUT_WIDTH = 8192;
     public static final String PREF_DEGHOST = "deghost";
     public static final String PREF_HANDHELD = "handheld";
+    /** Chụp thêm tấm thẳng lên (đỉnh trời) / thẳng xuống (mặt đất). Tắt thì bộ ghép tô vùng đó từ xung quanh. */
+    public static final String PREF_CAPTURE_ZENITH = "capture_zenith";
+    public static final String PREF_CAPTURE_NADIR = "capture_nadir";
 
     private Settings() {}
 }

@@ -172,8 +172,10 @@ public class CaptureActivity extends Activity implements SensorEventListener {
         Log.i(TAG, String.format(Locale.US, "camera %s jpeg %s preview %s focal %.1f fov %.1fx%.1f",
                 spec.id, spec.jpegSize, spec.previewSize, spec.focalPx, spec.hFovDeg, spec.vFovDeg));
 
-        handheld = getSharedPreferences(Settings.PREFS, MODE_PRIVATE).getBoolean(Settings.PREF_HANDHELD, false);
-        targets = CapturePlan.create(spec.hFovDeg, spec.vFovDeg, handheld);
+        android.content.SharedPreferences prefs = getSharedPreferences(Settings.PREFS, MODE_PRIVATE);
+        handheld = prefs.getBoolean(Settings.PREF_HANDHELD, false);
+        targets = CapturePlan.create(spec.hFovDeg, spec.vFovDeg, handheld,
+                prefs.getBoolean(Settings.PREF_CAPTURE_ZENITH, true), prefs.getBoolean(Settings.PREF_CAPTURE_NADIR, true));
         session = Session.create(this, spec.focalPx, spec.uprightWidth(), spec.uprightHeight(), targets.size());
         if (spec.bridgeSize != null) {
             session.bridgeFocalPx = spec.bridgeFocalPx;
